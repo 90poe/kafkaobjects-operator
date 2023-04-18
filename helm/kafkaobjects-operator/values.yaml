@@ -117,8 +117,8 @@ operator:
   # any selector from here is accepted https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
   # If not specified - all objects will be watched
   # example:
-  # labelSelector: "cluster in (dev, prod)"
-  # labelSelector: ""
+  # objectsLabelSelector: "cluster in (dev, prod)"
+  # objectsLabelSelector: ""
 
   # -- Additional environment variables to set
   extraEnvs: []

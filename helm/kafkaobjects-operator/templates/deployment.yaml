@@ -96,9 +96,9 @@ spec:
               value: {{ .Values.operator.kafka.brokers | quote }}
             - name: SCHEMA_REGISTRY_URL
               value: {{ .Values.operator.kafka.schemaRegistryURL | quote }}
-            {{ if .Values.operator.labelSelector }}
+            {{ if .Values.operator.objectsLabelSelector }}
             - name: LABEL_SELECTOR
-              value: {{ .Values.operator.labelSelector | quote }}
+              value: {{ .Values.operator.objectsLabelSelector | quote }}
             {{- end }}
 
           {{- if .Values.operator.extraEnvs }}
