@@ -96,7 +96,6 @@ func (r *KafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err != nil {
 		reqLogger.Error(err, "Failed to insert Kafka topic.")
 		statusMessage = fmt.Sprintf("can't create kafka topic: %v", err)
-		return ctrl.Result{}, nil
 	}
 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 		Type:    "Ready",

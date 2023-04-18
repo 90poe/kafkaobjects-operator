@@ -52,12 +52,6 @@ func (c *ClusterClient) getTopics() ([]string, error) {
 	return topics, nil
 }
 
-// deleteTopic would delete Kafka topic
-func (c *ClusterClient) deleteTopic(name string) error {
-	// For now it's stub as we don't want to delete topic
-	return nil
-}
-
 // createTopic is going to create Kafka topic from data from Structures
 func (c *ClusterClient) createTopic(topic *api.KafkaTopicSpec) error {
 	if topic.Partitions > c.maxPartsPerTopic {

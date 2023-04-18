@@ -8,12 +8,12 @@ import (
 )
 
 // generic constraint interface
-type EnvValue interface {
+type Value interface {
 	string | int | bool
 }
 
 // GetEnv would get Env variable
-func GetEnv[T EnvValue](name string) (T, error) {
+func GetEnv[T Value](name string) (T, error) {
 	var ref T
 	value, found := os.LookupEnv(name)
 	if !found {

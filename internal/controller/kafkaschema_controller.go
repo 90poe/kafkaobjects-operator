@@ -118,7 +118,7 @@ func (r *KafkaSchemaReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 	r.KafkaSchemaRegistryClient, err = schemaregistry.NewClient(
-		schemaregistry.SchemaRegistryURL(config.SchemaRegistryUrl),
+		schemaregistry.URL(config.SchemaRegistryURL),
 	)
 	if err != nil {
 		return err
