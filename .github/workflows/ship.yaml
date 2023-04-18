@@ -3,7 +3,7 @@ name: kafkaobjects-operator ship action
 on:
   push:
     tags:
-      - 'v*'
+      - 'operator/v*'
 
 concurrency:
   group: ci-ship-${{ inputs.git_repo }}-${{ github.ref }}-1
@@ -22,7 +22,7 @@ jobs:
       - uses: olegtarasov/get-tag@v2.1
         id: tagName
         with:
-          tagRegex: '(.*)'
+          tagRegex: 'operator/(.*)'
           tagRegexGroup: 1
 
       - name: Create valid tag(s)
