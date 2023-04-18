@@ -91,6 +91,7 @@ func (r *KafkaSchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+		Type:    "Ready",
 		Status:  metav1.ConditionTrue,
 		Reason:  "creation",
 		Message: statusMessage,
