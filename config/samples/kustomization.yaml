@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- xo_v1alpha1_kafkatopic.yaml
+- xo_v1alpha1_kafkaschema.yaml
+#+kubebuilder:scaffold:manifestskustomizesamples

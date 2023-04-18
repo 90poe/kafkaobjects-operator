@@ -1,0 +1,165 @@
+apiVersion: xo.ninetypercent.io/v1alpha1
+kind: KafkaSchema
+metadata:
+  labels:
+    app.kubernetes.io/name: kafkaschema
+    app.kubernetes.io/instance: kafkaschema-sample
+    app.kubernetes.io/part-of: kafkaobjects-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: kafkaobjects-operator
+    cluster: msk
+  name: kafkaschema-sample
+spec:
+  name: test-topic-1-value
+  compatibility: backward_transitive
+  schema: |
+    {
+    "type": "record",
+    "name": "SpireType5Message",
+    "namespace": "io.ninetypoe.operational_effectiveness",
+    "fields": [
+      {
+        "name": "meta",
+        "type": {
+          "type": "record",
+          "name": "Meta",
+          "fields": [
+            {
+              "name": "correlationId",
+              "type": "string",
+              "gotag": "validate:\"required,uuid\""
+            },
+            {
+              "name": "accountUUID",
+              "type": "string",
+              "gotag": "validate:\"required,uuid\""
+            },
+            {
+              "name": "sourceIdentifier",
+              "type": "string",
+              "gotag": "validate:\"required\""
+            }
+          ]
+        }
+      },
+      {
+        "name": "payload",
+        "type": {
+          "type": "record",
+          "name": "SpireType5Data",
+          "fields": [
+            {
+              "name": "vesselUUID",
+              "type": "string"
+            },
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "nmea",
+              "type": "string"
+            },
+            {
+              "name": "timestamp",
+              "type": "string"
+            },
+            {
+              "name": "messageId",
+              "type": "string"
+            },
+            {
+              "name": "messageType",
+              "type": "int"
+            },
+            {
+              "name": "createdAt",
+              "type": "string"
+            },
+            {
+              "name": "mmsi",
+              "type": "int"
+            },
+            {
+              "name": "collectionType",
+              "type": "string"
+            },
+            {
+              "name": "flag",
+              "type": "string"
+            },
+            {
+              "name": "flagShortCode",
+              "type": "string"
+            },
+            {
+              "name": "aisVersion",
+              "type": "int"
+            },
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "length",
+              "type": "int"
+            },
+            {
+              "name": "width",
+              "type": "int"
+            },
+            {
+              "name": "shipAndCargoType",
+              "type": "int"
+            },
+            {
+              "name": "callSign",
+              "type": "string"
+            },
+            {
+              "name": "imo",
+              "type": "int"
+            },
+            {
+              "name": "destination",
+              "type": "string"
+            },
+            {
+              "name": "eta",
+              "type": "string"
+            },
+            {
+              "name": "draught",
+              "type": "double"
+            },
+            {
+              "name": "dimensions",
+              "type": {
+                "type": "record",
+                "name": "AisType5Dimensions",
+                "fields": [
+                  {
+                    "name": "A",
+                    "type": "int"
+                  },
+                  {
+                    "name": "B",
+                    "type": "int"
+                  },
+                  {
+                    "name": "C",
+                    "type": "int"
+                  },
+                  {
+                    "name": "D",
+                    "type": "int"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+    }
+
