@@ -16,8 +16,8 @@ const (
 	MaxKafkaTopicsPartitionsEnvKey = "KAFKA_TOPIC_MAX_PARTITIONS"
 	// DefaultMaxParts is default for Max kafka topic partitions
 	DefaultMaxParts = 3
-	// SchemaRegistryUrlEnvKey holds env key, which has value for Schema registry URL
-	SchemaRegistryUrlEnvKey = "SCHEMA_REGISTRY_URL"
+	// SchemaRegistryURLEnvKey holds env key, which has value for Schema registry URL
+	SchemaRegistryURLEnvKey = "SCHEMA_REGISTRY_URL"
 	// MaxConcurrentReconcilesEnvKey holds env key, which has value for Maximum parallel reconciliations done
 	MaxConcurrentReconcilesEnvKey  = "MAX_CONCURRENT_RECONCILES"
 	DefaultMaxConcurrentReconciles = 2
@@ -28,7 +28,7 @@ const (
 type Config struct {
 	KafkaBrokers             string
 	MaxKafkaTopicsPartitions uint
-	SchemaRegistryUrl        string
+	SchemaRegistryURL        string
 	MaxConcurrentReconciles  int
 	LabelSelectors           *metav1.LabelSelector
 }
@@ -60,10 +60,10 @@ func NewConfig() (*Config, error) {
 	if (err != nil) || (max <= 0) {
 		logger.Info(fmt.Sprintf("setting max reconcilers to default %d", DefaultMaxConcurrentReconciles))
 	} else {
-		conf.MaxConcurrentReconciles = int(max)
+		conf.MaxConcurrentReconciles = max
 	}
 	// Get Kafka Schema Regsitry URL
-	conf.SchemaRegistryUrl, err = GetEnv[string](SchemaRegistryUrlEnvKey)
+	conf.SchemaRegistryURL, err = GetEnv[string](SchemaRegistryURLEnvKey)
 	if err != nil {
 		return nil, fmt.Errorf("can't make Config: %w", err)
 	}

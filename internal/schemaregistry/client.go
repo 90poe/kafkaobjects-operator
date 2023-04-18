@@ -33,7 +33,7 @@ type Client struct {
 type Option func(*Client) error
 
 // SchemeRegistryURL allows the Schema Registry URL to be set
-func SchemaRegistryURL(url string) Option {
+func URL(url string) Option {
 	return func(m *Client) error {
 
 		// schemaregistry.NewClient usefully does a lot of
