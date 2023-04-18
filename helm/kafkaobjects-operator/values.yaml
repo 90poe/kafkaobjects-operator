@@ -1,0 +1,265 @@
+## kafkaobjects-operator configuration
+
+## Overrides for generated resource names
+# See templates/_helpers.tpl
+# nameOverride:
+# fullnameOverride:
+
+## Labels to apply to all resources
+##
+commonLabels: {}
+# scmhash: abc123
+# myLabel: aakkmd
+
+operator:
+  # -- Configures the operator container name
+  containerName: operator
+  image:
+    registry: hub.docker.com
+    image: 90poe/kafkaobjects-operator
+    ## for backwards compatibility consider setting the full image url via the repository value below
+    ## use *either* current default registry/image or repository format or installing chart by providing the values.yaml will fail
+    ## repository:
+    tag: "v0.1.1"
+    pullPolicy: IfNotPresent
+
+  # -- Annotations to be added to the operator Deployment
+  ##
+  annotations: {}
+  #  keel.sh/pollSchedule: "@every 60m"
+
+  # -- Labels to be added to the operator Deployment and other resources that do not have option to specify labels
+  ##
+  labels: {}
+  #  keel.sh/policy: patch
+  #  keel.sh/trigger: poll
+
+  # -- The update strategy to apply to the Deployment
+  ##
+  updateStrategy: {}
+  #  rollingUpdate:
+  #    maxUnavailable: 1
+  #  type: RollingUpdate
+
+
+  # -- `minReadySeconds` to avoid killing pods before we are ready
+  ##
+  minReadySeconds: 10
+
+  # -- Annotations to be added to operator pods
+  ##
+  podAnnotations: {}
+
+  # -- extraArgs to be added to operator pods
+  ##
+  extraArgs: []
+
+  # Mutually exclusive with keda autoscaling
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 50
+    targetMemoryUtilizationPercentage: 50
+    behavior: {}
+      # scaleDown:
+      #   stabilizationWindowSeconds: 300
+      #  policies:
+      #   - type: Pods
+      #     value: 1
+      #     periodSeconds: 180
+      # scaleUp:
+      #   stabilizationWindowSeconds: 300
+      #   policies:
+      #   - type: Pods
+      #     value: 2
+      #     periodSeconds: 60
+
+  # -- Labels to add to the pod container metadata
+  podLabels: {}
+  #  key: value
+
+  # -- Optionally customize the pod dnsConfig.
+  dnsConfig: {}
+
+  # -- Optionally customize the pod hostname.
+  hostname: {}
+
+  # -- Optionally change this to ClusterFirstWithHostNet in case you have 'hostNetwork: true'.
+  # By default, while using host network, name resolution uses the host's DNS.
+  # If you wish kafkaobjects-operator to keep resolving names inside the k8s network,
+  # use ClusterFirstWithHostNet.
+  dnsPolicy: ClusterFirst
+
+  priorityClassName: ""
+
+  # -- Security Context policies for operator pods
+  podSecurityContext:
+    runAsUser: 65532
+
+  # -- See https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/ for notes on enabling and using sysctls
+  sysctls: {}
+  # sysctls:
+  #   "net.core.somaxconn": "8192"
+
+  # shareProcessNamespace enables process namespace sharing within the pod.
+  # This can be used for example to signal log rotation using `kill -USR1` from a sidecar.
+  shareProcessNamespace: false
+
+  # Kafka related configuration
+  kafka:
+    # Kafka brokers to connect to
+    brokers: ""
+    #  URL for Schema Registry, must have http:// or https:// prefix
+    schemaRegistryURL: ""
+
+  # Labels selector for the Kafka objects to watch
+  # any selector from here is accepted https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+  # If not specified - all objects will be watched
+  # example:
+  # labelSelector: "cluster in (dev, prod)"
+  # labelSelector: ""
+
+  # -- Additional environment variables to set
+  extraEnvs: []
+  # extraEnvs:
+  #   - name: FOO
+  #     valueFrom:
+  #       secretKeyRef:
+  #         key: FOO
+  #         name: secret-resource
+
+  ## Liveness and readiness probe values
+  ## Ref: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
+  ##
+  ## startupProbe:
+  ##   httpGet:
+  ##     # should match container.healthCheckPath
+  ##     path: "/healthz"
+  ##     port: 8081
+  ##     scheme: HTTP
+  ##   initialDelaySeconds: 5
+  ##   periodSeconds: 5
+  ##   timeoutSeconds: 2
+  ##   successThreshold: 1
+  ##   failureThreshold: 5
+  livenessProbe:
+    httpGet:
+      # should match container.healthCheckPath
+      path: "/healthz"
+      port: 8081
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 1
+    successThreshold: 1
+    failureThreshold: 5
+  readinessProbe:
+    httpGet:
+      # should match container.healthCheckPath
+      path: "/healthz"
+      port: 8081
+      scheme: HTTP
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 1
+    successThreshold: 1
+    failureThreshold: 3
+  # -- Configures the ports that the kafkaobjects-operator listens on
+  containerPort:
+    health: 8081
+  metricsPort: 8080
+  # -- Additional configMapName to the operator main container.
+  configMapName: []
+  #  - name: copy-portal-skins
+  #    mountPath: /var/lib/lemonldap-ng/portal/skins
+  resources:
+    limits:
+      # Don't add CPU limit not to see throtling and run faster. See https://erickhun.com/posts/kubernetes-faster-services-no-cpu-limits/
+      memory: 300Mi
+    requests:
+      cpu: 100m
+      memory: 200Mi
+  # -- Node labels for operator pod assignment
+  ## Ref: https://kubernetes.io/docs/user-guide/node-selection/
+  ##
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # -- Node tolerations for server scheduling to nodes with taints
+  ## Ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
+  ##
+  tolerations: []
+  #  - key: "key"
+  #    operator: "Equal|Exists"
+  #    value: "value"
+  #    effect: "NoSchedule|PreferNoSchedule|NoExecute(1.6 only)"
+
+  # -- Affinity and anti-affinity rules for server scheduling to nodes
+  ## Ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
+  ##
+  affinity: {}
+    # # An example of preferred pod anti-affinity, weight is in the range 1-100
+    # podAntiAffinity:
+    #   preferredDuringSchedulingIgnoredDuringExecution:
+    #   - weight: 100
+    #     podAffinityTerm:
+    #       labelSelector:
+    #         matchExpressions:
+    #         - key: app.kubernetes.io/name
+    #           operator: In
+    #           values:
+    #           - ingress-nginx
+    #         - key: app.kubernetes.io/instance
+    #           operator: In
+    #           values:
+    #           - ingress-nginx
+    #         - key: app.kubernetes.io/component
+    #           operator: In
+    #           values:
+    #           - operator
+    #       topologyKey: kubernetes.io/hostname
+
+  # -- Topology spread constraints rely on node labels to identify the topology domain(s) that each Node is in.
+  ## Ref: https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/
+  ##
+  topologySpreadConstraints: []
+    # - maxSkew: 1
+    #   topologyKey: topology.kubernetes.io/zone
+    #   whenUnsatisfiable: DoNotSchedule
+    #   labelSelector:
+    #     matchLabels:
+    #       app.kubernetes.io/instance: ingress-nginx-internal
+
+  # -- `terminationGracePeriodSeconds` to avoid killing pods before we are ready
+  ## wait up to five minutes for the drain of connections
+  ##
+  terminationGracePeriodSeconds: 10
+
+serviceAccount:
+  create: true
+  name: ""
+  automountServiceAccountToken: true
+
+serviceMonitor:
+  create: true
+  labels:
+    release: prometheus-operator
+
+
+# -- Rollback limit
+##
+revisionHistoryLimit: 10
+
+# -- Optional array of imagePullSecrets containing private registry credentials
+## Ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+imagePullSecrets: []
+# - name: secretName
+
+params: {}
+
+# -- Security Context policies for operator main container.
+# See https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/ for
+# notes on enabling and using sysctls
+##
+containerSecurityContext: {}
