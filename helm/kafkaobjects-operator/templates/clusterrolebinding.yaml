@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    {{- include "kafkaobjects-operator.labels" . | nindent 4 }}
+    {{- with .Values.operator.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  name: {{ include "kafkaobjects-operator.fullname" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kafkaobjects-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ template "kafkaobjects-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace | quote }}

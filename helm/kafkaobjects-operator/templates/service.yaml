@@ -1,0 +1,24 @@
+{{- $sm := .Values.serviceMonitor }}
+{{- if or $sm.create -}}
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: null
+  labels:
+    {{- include "kafkaobjects-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafkaobjects-operator
+    {{- with $sm.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  name: {{ include "kafkaobjects-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  ports:
+  - name: metrics
+    port: {{ .Values.operator.metricsPort }}
+    targetPort: {{ .Values.operator.metricsPort }}
+  selector:
+    app.kubernetes.io/component: kafkaobjects-operator
+status:
+  loadBalancer: {}
+{{- end }}

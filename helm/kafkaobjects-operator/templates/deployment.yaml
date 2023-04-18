@@ -1,0 +1,156 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    {{- include "kafkaobjects-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafkaobjects-operator
+    {{- with .Values.operator.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  name: {{ include "kafkaobjects-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.operator.annotations }}
+  annotations: {{ toYaml .Values.operator.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "kafkaobjects-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: operator
+  {{- if not .Values.operator.autoscaling.enabled }}
+  replicas: {{ .Values.operator.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  {{- if .Values.operator.updateStrategy }}
+  strategy:
+    {{ toYaml .Values.operator.updateStrategy | nindent 4 }}
+  {{- end }}
+  minReadySeconds: {{ .Values.operator.minReadySeconds }}
+  template:
+    metadata:
+    {{- if .Values.operator.podAnnotations }}
+      annotations:
+      {{- range $key, $value := .Values.operator.podAnnotations }}
+        {{ $key }}: {{ $value | quote }}
+      {{- end }}
+    {{- end }}
+      labels:
+        {{- include "kafkaobjects-operator.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: operator
+        {{- with .Values.operator.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if .Values.operator.podLabels }}
+        {{- toYaml .Values.operator.podLabels | nindent 8 }}
+      {{- end }}
+    spec:
+    {{- if .Values.operator.dnsConfig }}
+      dnsConfig: {{ toYaml .Values.operator.dnsConfig | nindent 8 }}
+    {{- end }}
+    {{- if .Values.operator.hostname }}
+      hostname: {{ toYaml .Values.operator.hostname | nindent 8 }}
+    {{- end }}
+      dnsPolicy: {{ .Values.operator.dnsPolicy }}
+    {{- if .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml .Values.imagePullSecrets | nindent 8 }}
+    {{- end }}
+    {{- if .Values.operator.priorityClassName }}
+      priorityClassName: {{ .Values.operator.priorityClassName | quote }}
+    {{- end }}
+    {{- if or .Values.operator.podSecurityContext .Values.operator.sysctls }}
+      securityContext:
+    {{- end }}
+    {{- if .Values.operator.podSecurityContext }}
+        {{- toYaml .Values.operator.podSecurityContext | nindent 8 }}
+    {{- end }}
+    {{- if .Values.operator.sysctls }}
+        sysctls:
+    {{- range $sysctl, $value := .Values.operator.sysctls }}
+        - name: {{ $sysctl | quote }}
+          value: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- if .Values.operator.shareProcessNamespace }}
+      shareProcessNamespace: {{ .Values.operator.shareProcessNamespace }}
+    {{- end }}
+      containers:
+        - name: {{ .Values.operator.containerName }}
+          {{- with .Values.operator.image }}
+          image: "{{- if .repository -}}{{ .repository }}{{ else }}{{ .registry }}/{{ include "kafkaobjects-operator.image" . }}{{- end -}}:{{ .tag }}"
+          {{- end }}
+          imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
+          {{- if .Values.operator.extraArgs }}
+          args:
+            {{- toYaml .Values.operator.extraArgs | nindent 12 }}
+          {{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: KAFKA_BROKERS
+              value: {{ .Values.operator.kafka.brokers | quote }}
+            - name: SCHEMA_REGISTRY_URL
+              value: {{ .Values.operator.kafka.schemaRegistryURL | quote }}
+            {{ if .Values.operator.labelSelector }}
+            - name: LABEL_SELECTOR
+              value: {{ .Values.operator.labelSelector | quote }}
+            {{- end }}
+
+          {{- if .Values.operator.extraEnvs }}
+            {{- toYaml .Values.operator.extraEnvs | nindent 12 }}
+          {{- end }}
+          {{- if .Values.operator.startupProbe }}
+          startupProbe: {{ toYaml .Values.operator.startupProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.operator.livenessProbe }}
+          livenessProbe: {{ toYaml .Values.operator.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.operator.readinessProbe }}
+          readinessProbe: {{ toYaml .Values.operator.readinessProbe | nindent 12 }}
+          {{- end }}
+          ports:
+          {{- range $key, $value := .Values.operator.containerPort }}
+            - name: {{ $key }}
+              containerPort: {{ $value }}
+              protocol: TCP
+          {{- end }}
+          {{- if .Values.operator.metricsPort }}
+            - name: metrics
+              containerPort: {{ .Values.operator.metricsPort }}
+              protocol: TCP
+          {{- end }}
+        {{- if .Values.operator.configMapName }}
+          volumeMounts:
+            {{- toYaml .Values.operator.configMapName | nindent 12 }}
+        {{- end }}
+        {{- if .Values.operator.resources }}
+          resources: {{ toYaml .Values.operator.resources | nindent 12 }}
+        {{- end }}
+    {{- if .Values.operator.hostNetwork }}
+      hostNetwork: {{ .Values.operator.hostNetwork }}
+    {{- end }}
+    {{- if .Values.operator.nodeSelector }}
+      nodeSelector: {{ toYaml .Values.operator.nodeSelector | nindent 8 }}
+    {{- end }}
+    {{- if .Values.operator.tolerations }}
+      tolerations: {{ toYaml .Values.operator.tolerations | nindent 8 }}
+    {{- end }}
+    {{- if .Values.operator.affinity }}
+      affinity: {{ toYaml .Values.operator.affinity | nindent 8 }}
+    {{- end }}
+    {{- if .Values.operator.topologySpreadConstraints }}
+      topologySpreadConstraints: {{ toYaml .Values.operator.topologySpreadConstraints | nindent 8 }}
+    {{- end }}
+      serviceAccountName: {{ template "kafkaobjects-operator.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.operator.terminationGracePeriodSeconds }}
+    {{- if .Values.operator.configMapName }}
+      volumes:
+      {{- if .Values.operator.configMapName }}
+        {{ toYaml .Values.operator.configMapName | nindent 8 }}
+      {{- end }}
+    {{- end }}
