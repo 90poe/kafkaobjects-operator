@@ -87,7 +87,7 @@ func (r *KafkaSchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err != nil {
 		// Error reading the object - requeue the request.
 		reqLogger.Error(err, "Failed to create schema.")
-		statusMessage = fmt.Sprintf("can't create schema registry: %v", err)
+		statusMessage = fmt.Sprintf("can't create schema %s: %v", instance.Name, err)
 	}
 
 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
