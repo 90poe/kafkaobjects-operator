@@ -34,6 +34,7 @@ import (
 
 	xov1alpha1 "github.com/90poe/kafkaobjects-operator/api/v1alpha1"
 	"github.com/90poe/kafkaobjects-operator/internal/controller"
+	"github.com/90poe/kafkaobjects-operator/internal/version"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -117,7 +118,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager")
+	setupLog.Info("starting manager version %s (built at %s, git hash %s)",
+		version.Version,
+		version.BuildDate,
+		version.GitHash,
+	)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)

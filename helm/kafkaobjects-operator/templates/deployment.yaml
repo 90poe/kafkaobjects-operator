@@ -81,6 +81,12 @@ spec:
           imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
           {{- if .Values.operator.extraArgs }}
           args:
+            {{- if .Values.operator.leaderElection }}
+            "--leader-elect"
+              {{- if .Values.operator.leaderElection.id }}
+            "--leader-election-id={{ .Values.operator.leaderElection.id }}"
+              {{- end}}
+            {{- end }}
             {{- toYaml .Values.operator.extraArgs | nindent 12 }}
           {{- end }}
           env:
@@ -99,6 +105,15 @@ spec:
             {{ if .Values.operator.objectsLabelSelector }}
             - name: LABEL_SELECTOR
               value: {{ .Values.operator.objectsLabelSelector | quote }}
+            {{- end }}
+            {{- if .Values.operator.slack }}
+            - name: SLACK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.operator.slack.secretName }}
+                  key: {{ .Values.operator.slack.secretTokenKey }}
+            - name: SLACK_CHANNEL
+              value: {{ .Values.operator.slack.channel | quote }}
             {{- end }}
 
           {{- if .Values.operator.extraEnvs }}

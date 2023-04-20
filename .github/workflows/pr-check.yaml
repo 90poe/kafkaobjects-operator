@@ -51,6 +51,15 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
+      - name: Install latest major GO version
+        uses: actions/setup-go@v3
+        with:
+          go-version: '1.20' # The Go version to download
+
+      - name: Build executables locally
+        run: |
+          make build
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
 
