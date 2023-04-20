@@ -23,6 +23,9 @@ const (
 	DefaultMaxConcurrentReconciles = 2
 	// LabelSelectorEnvKey will have label selector, which will make us work only with objects, which have those labels added. If not defined, we will work with ALL objects in K8S cluster.
 	LabelSelectorEnvKey = "LABEL_SELECTOR"
+	// SlackWebhookURLEnvKey holds env key, which has value for Slack webhook URL
+	SlackTokenEnvKey   = "SLACK_TOKEN"
+	SlackChannelEnvKey = "SLACK_CHANNEL"
 )
 
 type Config struct {
@@ -31,6 +34,8 @@ type Config struct {
 	SchemaRegistryURL        string
 	MaxConcurrentReconciles  int
 	LabelSelectors           *metav1.LabelSelector
+	SlackToken               string
+	SlackChannel             string
 }
 
 func NewConfig() (*Config, error) {
@@ -75,6 +80,12 @@ func NewConfig() (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("can't parse `%s` as label selectors: %w", labelSelectors, err)
 		}
+	}
+	// Get optional Slack webhook URL
+	conf.SlackToken, _ = GetEnv[string](SlackTokenEnvKey) // nolint:errcheck
+	conf.SlackChannel, err = GetEnv[string](SlackChannelEnvKey)
+	if err != nil {
+		conf.SlackChannel = "empty"
 	}
 	return conf, nil
 }

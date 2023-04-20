@@ -32,6 +32,7 @@ import (
 
 	xov1alpha1 "github.com/90poe/kafkaobjects-operator/api/v1alpha1"
 	"github.com/90poe/kafkaobjects-operator/internal/env"
+	"github.com/90poe/kafkaobjects-operator/internal/reporter"
 	"github.com/90poe/kafkaobjects-operator/internal/schemaregistry"
 )
 
@@ -40,6 +41,7 @@ type KafkaSchemaReconciler struct {
 	client.Client
 	Scheme                    *runtime.Scheme
 	KafkaSchemaRegistryClient *schemaregistry.Client
+	Messanger                 *reporter.Messanger
 }
 
 //+kubebuilder:rbac:groups=xo.ninetypercent.io,resources=kafkaschemas,verbs=get;list;watch;create;update;patch;delete
@@ -88,6 +90,7 @@ func (r *KafkaSchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// Error reading the object - requeue the request.
 		reqLogger.Error(err, "Failed to create schema.")
 		statusMessage = fmt.Sprintf("can't create schema %s: %v", instance.Name, err)
+		r.Messanger.Message([]string{statusMessage}, "Failed to create schema", reporter.MsgColorError)
 	}
 
 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
@@ -120,6 +123,12 @@ func (r *KafkaSchemaReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.KafkaSchemaRegistryClient, err = schemaregistry.NewClient(
 		schemaregistry.URL(config.SchemaRegistryURL),
 	)
+	if err != nil {
+		return err
+	}
+	// Make slack messanger
+	r.Messanger, err = reporter.New(config.SlackToken,
+		reporter.SlackChannel(config.SlackChannel))
 	if err != nil {
 		return err
 	}

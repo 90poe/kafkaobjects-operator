@@ -33,6 +33,7 @@ import (
 	xov1alpha1 "github.com/90poe/kafkaobjects-operator/api/v1alpha1"
 	"github.com/90poe/kafkaobjects-operator/internal/env"
 	"github.com/90poe/kafkaobjects-operator/internal/kafka"
+	"github.com/90poe/kafkaobjects-operator/internal/reporter"
 )
 
 // KafkaTopicReconciler reconciles a KafkaTopic object
@@ -40,6 +41,7 @@ type KafkaTopicReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
 	KafkaClientConfig *kafka.ClusterConfig
+	Messanger         *reporter.Messanger
 }
 
 //+kubebuilder:rbac:groups=xo.ninetypercent.io,resources=kafkatopics,verbs=get;list;watch;create;update;patch;delete
@@ -87,6 +89,7 @@ func (r *KafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	kClient, err := r.KafkaClientConfig.GetClient()
 	if err != nil {
 		reqLogger.Error(err, "Failed to get Kafka Client.")
+		r.Messanger.Message([]string{fmt.Sprintf("%v", err)}, "Failed to get Kafka Client", reporter.MsgColorError)
 		return ctrl.Result{}, err
 	}
 	defer kClient.Close()
@@ -94,8 +97,9 @@ func (r *KafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	statusMessage := "Succeeded"
 	err = kClient.InsertTopic(&instance.Spec)
 	if err != nil {
-		reqLogger.Error(err, "Failed to insert Kafka topic.")
+		reqLogger.Error(err, "Failed to create Kafka topic.")
 		statusMessage = fmt.Sprintf("can't create kafka topic %s: %v", instance.Name, err)
+		r.Messanger.Message([]string{statusMessage}, "Failed to create Kafka topic", reporter.MsgColorError)
 	}
 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 		Type:    "Ready",
@@ -128,6 +132,12 @@ func (r *KafkaTopicReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		kafka.Brokers(config.KafkaBrokers),
 		kafka.MaxPartsPerTopic(config.MaxKafkaTopicsPartitions),
 	)
+	if err != nil {
+		return err
+	}
+	// Make slack messanger
+	r.Messanger, err = reporter.New(config.SlackToken,
+		reporter.SlackChannel(config.SlackChannel))
 	if err != nil {
 		return err
 	}

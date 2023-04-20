@@ -22,7 +22,17 @@ operator:
     ## repository:
     tag: "v0.1.1"
     pullPolicy: IfNotPresent
-
+  # If you have more than one operator and would like to enable leader election
+  # please uncomment and fill in this section.
+  # leaderElection:
+  #   enabled: true
+  #   id: "some-unique-id"
+  # If you would like to have Slack integration please uncomment and fill in this
+  # section.
+  # slack:
+  #   secretName: some-secret-with-token
+  #   secretTokenKey: token-key-in-secret
+  #   channel: "#some-channel"
   # -- Annotations to be added to the operator Deployment
   ##
   annotations: {}

@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.1.0
+VERSION ?= $(shell cat version.txt)
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -13,6 +13,35 @@ VERSION ?= 0.1.0
 ifneq ($(origin CHANNELS), undefined)
 BUNDLE_CHANNELS := --channels=$(CHANNELS)
 endif
+
+GOOS ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
+BUILT_AT ?= $(shell date +%s)
+GIT_COMMIT ?= $(shell git describe --dirty --always)
+ARCHS := arm64 amd64
+OSES := linux
+
+ifeq ($(GOOS), darwin)
+	ifeq ($(GOARCH), arm64)
+		# K8S don't have yet 1.22.x for arm64
+		GOARCH := amd64
+	endif
+endif
+
+# Func to build target
+define build_target
+	CGO_ENABLED=0 \
+	GOOS=$(1) \
+	GOARCH=$(2) \
+	go build \
+	-mod=vendor \
+	-ldflags="-s -w \
+	-X github.com/90poe/kafkaobjects-operator/internal/version.Version=$(VERSION) \
+	-X github.com/90poe/kafkaobjects-operator/internal/version.BuildDate='$(BUILT_AT)' \
+	-X github.com/90poe/kafkaobjects-operator/internal/version.GitHash=$(GIT_COMMIT)" \
+	-o bin/manager-$(1)-$(2) \
+	cmd/main.go ;
+endef
 
 # DEFAULT_CHANNEL defines the default channel used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g DEFAULT_CHANNEL = "stable")
@@ -109,7 +138,7 @@ test: manifests generate fmt vet envtest ## Run tests.
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	$(foreach os,$(OSES),$(foreach arch,$(ARCHS),$(call build_target,$(os),$(arch))))
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -119,7 +148,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # (i.e. docker build --platform linux/arm64 ). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
-docker-build: test ## Build docker image with the manager.
+docker-build: build test ## Build docker image with the manager.
 	docker build -t ${IMG} .
 
 .PHONY: docker-push
