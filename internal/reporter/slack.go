@@ -18,7 +18,7 @@ type Messanger struct {
 }
 
 const (
-	BotName         = "Kafka opbects operator"
+	BotName         = "Kafka objects operator"
 	MsgColorOK      = "#00CC00"
 	MsgColorWarning = "#F5EC1E"
 	MsgColorError   = "#EE0000"
@@ -57,7 +57,7 @@ func (r *Messanger) Message(
 		Title:      title,
 		Text:       strings.Join(messages, "\n"),
 		AuthorName: BotName,
-		Footer:     "Kafka opbects operator",
+		Footer:     "Kafka objects operator",
 		FooterIcon: BotLogo,
 	}
 	_, _, err := r.slackClient.PostMessage(r.slackChannel,
