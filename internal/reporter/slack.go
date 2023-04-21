@@ -22,7 +22,7 @@ const (
 	MsgColorOK      = "#00CC00"
 	MsgColorWarning = "#F5EC1E"
 	MsgColorError   = "#EE0000"
-	BotLogo         = "https://upload.wikimedia.org/wikipedia/commons/3/39/Kubernetes_logo_without_workmark.svg"
+	BotLogo         = "https://90poe-tools-infrastructure.s3.eu-west-1.amazonaws.com/images/k8s-logo.png"
 )
 
 func New(token string, options ...Options) (*Messanger, error) {
@@ -57,7 +57,7 @@ func (r *Messanger) Message(
 		Title:      title,
 		Text:       strings.Join(messages, "\n"),
 		AuthorName: BotName,
-		Footer:     "Migrations service notifications",
+		Footer:     "Kafka opbects operator",
 		FooterIcon: BotLogo,
 	}
 	_, _, err := r.slackClient.PostMessage(r.slackChannel,
