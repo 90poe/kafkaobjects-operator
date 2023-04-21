@@ -50,7 +50,7 @@ func (r *Messanger) Message(
 	messages []string,
 	title, color string) {
 	// system logger
-	reqLogger := log.FromContext(context.Background()).WithValues("reporter")
+	reqLogger := log.FromContext(context.Background()).WithValues("reporter", "slack")
 	// Send message to slack
 	attachment := slack.Attachment{
 		Color:      color,
