@@ -55,9 +55,11 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var leaderElectionID string
+	var leaderElectionNamespace string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&leaderElectionID, "leader-election-id", "73968a97", "ID to use for leader election. Usefull, when running more than one managers for different Kafka clusters in K8S.")
+	flag.StringVar(&leaderElectionNamespace, "leader-election-namespace", "kube-system", "Namespace to use for leader election. Required for leader elections. Default kube-system")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -70,12 +72,13 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
-		Port:                   9443,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       fmt.Sprintf("%s.ninetypercent.io", leaderElectionID),
+		Scheme:                  scheme,
+		MetricsBindAddress:      metricsAddr,
+		Port:                    9443,
+		HealthProbeBindAddress:  probeAddr,
+		LeaderElection:          enableLeaderElection,
+		LeaderElectionID:        fmt.Sprintf("%s.ninetypercent.io", leaderElectionID),
+		LeaderElectionNamespace: leaderElectionNamespace,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly

@@ -82,9 +82,10 @@ spec:
           {{- if .Values.operator.extraArgs }}
           args:
             {{- if .Values.operator.leaderElection }}
-            "--leader-elect"
+            "-leader-elect=true"
+            "-leader-election-namespace={{ .Release.Namespace }}"
               {{- if .Values.operator.leaderElection.id }}
-            "--leader-election-id={{ .Values.operator.leaderElection.id }}"
+            "-leader-election-id={{ .Values.operator.leaderElection.id }}"
               {{- end}}
             {{- end }}
             {{- toYaml .Values.operator.extraArgs | nindent 12 }}
