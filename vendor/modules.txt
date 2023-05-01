@@ -204,7 +204,7 @@ github.com/spf13/pflag
 # github.com/stretchr/testify v1.8.2
 ## explicit; go 1.13
 github.com/stretchr/testify/assert
-# github.com/twmb/franz-go v1.13.2
+# github.com/twmb/franz-go v1.13.3
 ## explicit; go 1.18
 github.com/twmb/franz-go/pkg/kbin
 github.com/twmb/franz-go/pkg/kerr
