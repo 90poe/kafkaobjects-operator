@@ -9,7 +9,7 @@ require (
 	github.com/slack-go/slack v0.12.2
 	github.com/stretchr/testify v1.8.2
 	github.com/twmb/franz-go v1.13.2
-	github.com/twmb/franz-go/pkg/kadm v1.8.0
+	github.com/twmb/franz-go/pkg/kadm v1.8.1
 	k8s.io/apimachinery v0.26.1
 	k8s.io/client-go v0.26.1
 	sigs.k8s.io/controller-runtime v0.14.6
