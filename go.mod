@@ -7,7 +7,7 @@ require (
 	github.com/onsi/gomega v1.27.6
 	github.com/riferrei/srclient v0.6.0
 	github.com/slack-go/slack v0.12.2
-	github.com/stretchr/testify v1.8.2
+	github.com/stretchr/testify v1.8.4
 	github.com/twmb/franz-go v1.13.2
 	github.com/twmb/franz-go/pkg/kadm v1.8.0
 	k8s.io/apimachinery v0.26.1
