@@ -155,10 +155,11 @@ type groupConsumer struct {
 
 // LeaveGroup leaves a group if in one. Calling the client's Close function
 // also leaves a group, so this is only necessary to call if you plan to leave
-// the group and continue using the client.
-//
-// If you have overridden the default revoke, you must manually commit offsets
-// before leaving the group.
+// the group and continue using the client. Note that if a rebalance is in
+// progress, this function waits for the rebalance to complete before the group
+// can be left. This is necessary to allow you to safely issue one final offset
+// commit in OnPartitionsRevoked. If you have overridden the default revoke,
+// you must manually commit offsets before leaving the group.
 //
 // If you have configured the group with an InstanceID, this does not leave the
 // group. With instance IDs, it is expected that clients will restart and
@@ -173,7 +174,7 @@ func (cl *Client) LeaveGroup() {
 
 	c.waitAndAddRebalance()
 	c.mu.Lock() // lock for assign
-	c.assignPartitions(nil, assignInvalidateAll, noTopicsPartitions, "invalidating all assignments in LeaveGroup")
+	c.assignPartitions(nil, assignInvalidateAll, nil, "invalidating all assignments in LeaveGroup")
 	wait := c.g.leave()
 	c.mu.Unlock()
 	c.unaddRebalance()
@@ -353,7 +354,7 @@ func (g *groupConsumer) manage() {
 					h.OnGroupManageError(err)
 				}
 			})
-			g.c.addFakeReadyForDraining("", 0, &ErrGroupSession{err})
+			g.c.addFakeReadyForDraining("", 0, &ErrGroupSession{err}, "notification of group management loop error")
 		}
 
 		// If we are eager, we should have invalidated everything
@@ -417,14 +418,13 @@ func (g *groupConsumer) leave() (wait func()) {
 	wasDead := g.dying
 	g.dying = true
 	wasManaging := g.managing
+	g.cancel()
 	g.mu.Unlock()
 
 	done := make(chan struct{})
 
 	go func() {
 		defer close(done)
-
-		g.cancel()
 
 		if wasManaging {
 			// We want to wait for the manage goroutine to be done
@@ -997,7 +997,9 @@ func (g *groupConsumer) rejoin(why string) {
 // for group cancelation to return early.
 func (g *groupConsumer) joinAndSync(joinWhy string) error {
 	g.noCommitDuringJoinAndSync.Lock()
+	g.cfg.logger.Log(LogLevelDebug, "blocking commits from join&sync")
 	defer g.noCommitDuringJoinAndSync.Unlock()
+	defer g.cfg.logger.Log(LogLevelDebug, "unblocking commits from join&sync")
 
 	g.cfg.logger.Log(LogLevelInfo, "joining group", "group", g.cfg.group)
 	g.leader.Store(false)
@@ -1034,15 +1036,23 @@ start:
 		joined   = make(chan struct{})
 	)
 
+	// NOTE: For this function, we have to use the client context, not the
+	// group context. We want to allow people to issue one final commit in
+	// OnPartitionsRevoked before leaving a group, so we need to block
+	// commits during join&sync. If we used the group context, we would be
+	// cancled immediately when leaving while a join or sync is inflight,
+	// and then our final commit will receive either REBALANCE_IN_PROGRESS
+	// or ILLEGAL_GENERATION.
+
 	go func() {
 		defer close(joined)
-		joinResp, err = joinReq.RequestWith(g.ctx, g.cl)
+		joinResp, err = joinReq.RequestWith(g.cl.ctx, g.cl)
 	}()
 
 	select {
 	case <-joined:
-	case <-g.ctx.Done():
-		return g.ctx.Err() // group killed
+	case <-g.cl.ctx.Done():
+		return g.cl.ctx.Err() // client closed
 	}
 	if err != nil {
 		return err
@@ -1075,13 +1085,13 @@ start:
 	g.cfg.logger.Log(LogLevelInfo, "syncing", "group", g.cfg.group, "protocol_type", g.cfg.protocol, "protocol", protocol)
 	go func() {
 		defer close(synced)
-		syncResp, err = syncReq.RequestWith(g.ctx, g.cl)
+		syncResp, err = syncReq.RequestWith(g.cl.ctx, g.cl)
 	}()
 
 	select {
 	case <-synced:
-	case <-g.ctx.Done():
-		return g.ctx.Err()
+	case <-g.cl.ctx.Done():
+		return g.cl.ctx.Err()
 	}
 	if err != nil {
 		return err
@@ -1795,9 +1805,9 @@ func (g *groupConsumer) updateUncommitted(fetches Fetches) {
 
 				if debug {
 					if setHead {
-						fmt.Fprintf(&b, "%d{%d=>%d}, ", partition.Partition, prior.head.Offset, set.Offset)
+						fmt.Fprintf(&b, "%d{%d=>%d r%d}, ", partition.Partition, prior.head.Offset, set.Offset, len(partition.Records))
 					} else {
-						fmt.Fprintf(&b, "%d{%d=>%d=>%d}, ", partition.Partition, prior.head.Offset, prior.dirty.Offset, set.Offset)
+						fmt.Fprintf(&b, "%d{%d=>%d=>%d r%d}, ", partition.Partition, prior.head.Offset, prior.dirty.Offset, set.Offset, len(partition.Records))
 					}
 				}
 
@@ -2242,8 +2252,8 @@ func PreCommitFnContext(ctx context.Context, fn func(*kmsg.OffsetCommitRequest) 
 // OnPartitionsRevoked, but for most workloads, a small bit of potential
 // duplicate processing is fine.  See the documentation on DisableAutoCommit
 // for more details. You can also avoid this problem by using
-// BlockRebalanceOnCommit, but that option comes with its own tradeoffs (refer
-// to its documentation).
+// BlockRebalanceOnPoll, but that option comes with its own tradeoffs (refer to
+// its documentation).
 //
 // It is recommended to always commit records in order (per partition). If you
 // call this function twice with record for partition 0 at offset 999
@@ -2444,6 +2454,7 @@ func (cl *Client) CommitOffsetsSync(
 // early if we have to wait and the context is canceled.
 func (g *groupConsumer) waitJoinSyncMu(ctx context.Context) error {
 	if g.noCommitDuringJoinAndSync.TryRLock() {
+		g.cfg.logger.Log(LogLevelDebug, "grabbed join/sync mu on first try")
 		return nil
 	}
 
@@ -2469,8 +2480,10 @@ func (g *groupConsumer) waitJoinSyncMu(ctx context.Context) error {
 
 	select {
 	case <-blockJoinSyncCh:
+		g.cfg.logger.Log(LogLevelDebug, "grabbed join/sync mu after waiting")
 		return nil
 	case <-ctx.Done():
+		g.cfg.logger.Log(LogLevelDebug, "not grabbing mu because context canceled")
 		maybeRUnlock()
 		return ctx.Err()
 	}
