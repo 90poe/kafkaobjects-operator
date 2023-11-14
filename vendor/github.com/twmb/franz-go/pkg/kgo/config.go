@@ -114,6 +114,7 @@ type cfg struct {
 	defaultProduceTopic string
 	maxRecordBatchBytes int32
 	maxBufferedRecords  int64
+	maxBufferedBytes    int64
 	produceTimeout      time.Duration
 	recordRetries       int64
 	maxUnknownFailures  int64
@@ -121,6 +122,7 @@ type cfg struct {
 	recordTimeout       time.Duration
 	manualFlushing      bool
 	txnBackoff          time.Duration
+	missingTopicDelete  time.Duration
 
 	partitioner Partitioner
 
@@ -141,8 +143,9 @@ type cfg struct {
 	rack           string
 	preferLagFn    PreferLagFn
 
-	maxConcurrentFetches int
-	disableFetchSessions bool
+	maxConcurrentFetches     int
+	disableFetchSessions     bool
+	keepRetryableFetchErrors bool
 
 	topics     map[string]*regexp.Regexp   // topics to consume; if regex is true, values are compiled regular expressions
 	partitions map[string]map[int32]Offset // partitions to directly consume from
@@ -291,6 +294,7 @@ func (cfg *cfg) validate() error {
 
 		// Some random producer settings.
 		{name: "max buffered records", v: cfg.maxBufferedRecords, allowed: 1, badcmp: i64lt},
+		{name: "max buffered bytes", v: cfg.maxBufferedBytes, allowed: 0, badcmp: i64lt},
 		{name: "linger", v: int64(cfg.linger), allowed: int64(time.Minute), badcmp: i64gt, durs: true},
 		{name: "produce timeout", v: int64(cfg.produceTimeout), allowed: int64(100 * time.Millisecond), badcmp: i64lt, durs: true},
 		{name: "record timeout", v: int64(cfg.recordTimeout), allowed: int64(time.Second), badcmp: func(l, r int64) (bool, string) {
@@ -388,7 +392,7 @@ func (cfg *cfg) validate() error {
 	return nil
 }
 
-// processHooks will inspect and recusively unpack slices of hooks stopping
+// processHooks will inspect and recursively unpack slices of hooks stopping
 // if the instance implements any hook interface. It will return an error on
 // the first instance that implements no hook interface
 func processHooks(hooks []Hook) ([]Hook, error) {
@@ -479,8 +483,9 @@ func defaultCfg() cfg {
 		maxBrokerWriteBytes: 100 << 20, // Kafka socket.request.max.bytes default is 100<<20
 		maxBrokerReadBytes:  100 << 20,
 
-		metadataMaxAge: 5 * time.Minute,
-		metadataMinAge: 5 * time.Second / 2,
+		metadataMaxAge:     5 * time.Minute,
+		metadataMinAge:     5 * time.Second,
+		missingTopicDelete: 15 * time.Second,
 
 		//////////////
 		// producer //
@@ -641,6 +646,12 @@ func DialTLSConfig(c *tls.Config) Opt {
 	return clientOpt{func(cfg *cfg) { cfg.dialTLS = c }}
 }
 
+// DialTLS opts into dialing brokers with TLS. This is a shortcut for
+// DialTLSConfig with an empty config. See DialTLSConfig for more details.
+func DialTLS() Opt {
+	return DialTLSConfig(new(tls.Config))
+}
+
 // SeedBrokers sets the seed brokers for the client to use, overriding the
 // default 127.0.0.1:9092.
 //
@@ -780,7 +791,7 @@ func MetadataMaxAge(age time.Duration) Opt {
 }
 
 // MetadataMinAge sets the minimum time between metadata queries, overriding
-// the default 2.5s. You may want to raise or lower this to reduce the number of
+// the default 5s. You may want to raise or lower this to reduce the number of
 // metadata queries the client will make. Notably, if metadata detects an error
 // in any topic or partition, it triggers itself to update as soon as allowed.
 func MetadataMinAge(age time.Duration) Opt {
@@ -822,6 +833,17 @@ func WithHooks(hooks ...Hook) Opt {
 // too long, the client progressively increases the backoff.
 func ConcurrentTransactionsBackoff(backoff time.Duration) Opt {
 	return clientOpt{func(cfg *cfg) { cfg.txnBackoff = backoff }}
+}
+
+// ConsiderMissingTopicDeletedAfter sets the amount of time a topic can be
+// missing from metadata responses _after_ loading it at least once before it
+// is considered deleted, overriding the default of 15s. Note that for newer
+// versions of Kafka, it may take a bit of time (~15s) for the cluster to fully
+// recognize a newly created topic. If this option is set too low, there is
+// some risk that the client will internally purge and re-see a topic a few
+// times until the cluster fully broadcasts the topic creation.
+func ConsiderMissingTopicDeletedAfter(t time.Duration) Opt {
+	return clientOpt{func(cfg *cfg) { cfg.missingTopicDelete = t }}
 }
 
 ////////////////////////////
@@ -932,6 +954,23 @@ func MaxBufferedRecords(n int) ProducerOpt {
 	return producerOpt{func(cfg *cfg) { cfg.maxBufferedRecords = int64(n) }}
 }
 
+// MaxBufferedBytes sets the max amount of bytes that the client will buffer
+// while producing, blocking produces until records are finished if this limit
+// is reached. This overrides the unlimited default.
+//
+// Note that this option does _not_ apply for consuming: the client cannot
+// limit bytes buffered for consuming because of decompression. You can roughly
+// control consuming memory by using [MaxConcurrentFetches], [FetchMaxBytes],
+// and [FetchMaxPartitionBytes].
+//
+// If you produce a record that is larger than n, the record is immediately
+// failed with kerr.MessageTooLarge.
+//
+// Note that this limit applies after [MaxBufferedRecords].
+func MaxBufferedBytes(n int) ProducerOpt {
+	return producerOpt{func(cfg *cfg) { cfg.maxBufferedBytes = int64(n) }}
+}
+
 // RecordPartitioner uses the given partitioner to partition records, overriding
 // the default UniformBytesPartitioner(64KiB, true, true, nil).
 func RecordPartitioner(partitioner Partitioner) ProducerOpt {
@@ -1031,8 +1070,8 @@ func ProducerLinger(linger time.Duration) ProducerOpt {
 // ManualFlushing disables auto-flushing when producing. While you can still
 // set lingering, it would be useless to do so.
 //
-// With manual flushing, producing while MaxBufferedRecords have already been
-// produced and not flushed will return ErrMaxBuffered.
+// With manual flushing, producing while MaxBufferedRecords or MaxBufferedBytes
+// have already been produced and not flushed will return ErrMaxBuffered.
 func ManualFlushing() ProducerOpt {
 	return producerOpt{func(cfg *cfg) { cfg.manualFlushing = true }}
 }
@@ -1342,6 +1381,20 @@ func ConsumePreferringLagFn(fn PreferLagFn) ConsumerOpt {
 	return consumerOpt{func(cfg *cfg) { cfg.preferLagFn = fn }}
 }
 
+// KeepRetryableFetchErrors switches the client to always return any retryable
+// broker error when fetching, rather than stripping them. By default, the
+// client strips retryable errors from fetch responses; these are usually
+// signals that a client needs to update its metadata to learn of where a
+// partition has moved to (from one broker to another), or they are signals
+// that one broker is temporarily unhealthy (broker not available). You can opt
+// into keeping these errors if you want to specifically react to certain
+// events. For example, if you want to react to you yourself deleting a topic,
+// you can watch for either UNKNOWN_TOPIC_OR_PARTITION or UNKNOWN_TOPIC_ID
+// errors being returned in fetches (and ignore the other errors).
+func KeepRetryableFetchErrors() ConsumerOpt {
+	return consumerOpt{func(cfg *cfg) { cfg.keepRetryableFetchErrors = true }}
+}
+
 //////////////////////////////////
 // CONSUMER GROUP CONFIGURATION //
 //////////////////////////////////
@@ -1504,18 +1557,19 @@ func AdjustFetchOffsetsFn(adjustOffsetsBeforeAssign func(context.Context, map[st
 // OnPartitionsAssigned sets the function to be called when a group is joined
 // after partitions are assigned before fetches for those partitions begin.
 //
-// This function combined with OnPartitionsRevoked should not exceed the
-// rebalance interval. It is possible for the group, immediately after
-// finishing a balance, to re-enter a new balancing session.
+// This function, combined with OnPartitionsRevoked, should not exceed the
+// rebalance interval. It is possible for the group to re-enter a new balancing
+// session immediately after finishing a balance.
 //
-// The OnPartitionsAssigned function is passed the client's context, which is
-// only canceled if the client is closed.
+// This function is passed the client's context, which is only canceled if the
+// client is closed.
 //
-// This function is not called concurrent with any other On callback, and this
-// function is given a new map that the user is free to modify. This function
-// can be called at any time you are polling or processing records. If you want
-// to ensure this function is called serially with processing, consider the
-// BlockRebalanceOnPoll option.
+// This function is not called concurrent with any other OnPartitions callback,
+// and this function is given a new map that the user is free to modify.
+//
+// This function can be called at any time you are polling or processing
+// records. If you want to ensure this function is called serially with
+// processing, consider the BlockRebalanceOnPoll option.
 func OnPartitionsAssigned(onAssigned func(context.Context, *Client, map[string][]int32)) GroupOpt {
 	return groupOpt{func(cfg *cfg) { cfg.onAssigned, cfg.setAssigned = onAssigned, true }}
 }
@@ -1523,17 +1577,12 @@ func OnPartitionsAssigned(onAssigned func(context.Context, *Client, map[string][
 // OnPartitionsRevoked sets the function to be called once this group member
 // has partitions revoked.
 //
-// This function combined with OnPartitionsAssigned should not exceed the
-// rebalance interval. It is possible for the group, immediately after
-// finishing a balance, to re-enter a new balancing session.
+// This function, combined with [OnPartitionsAssigned], should not exceed the
+// rebalance interval. It is possible for the group to re-enter a new balancing
+// session immediately after finishing a balance.
 //
 // If autocommit is enabled, the default OnPartitionsRevoked is a blocking
-// commit all non-dirty offsets (where dirty is the most recent poll). The
-// reason for a blocking commit is so that no later commit cancels the blocking
-// commit. If the commit in OnPartitionsRevoked were canceled, then the
-// rebalance would proceed immediately, the commit that canceled the blocking
-// commit would fail, and duplicates could be consumed after the rebalance
-// completes.
+// commit of all non-dirty offsets (where "dirty" is the most recent poll).
 //
 // The OnPartitionsRevoked function is passed the client's context, which is
 // only canceled if the client is closed. OnPartitionsRevoked function is
@@ -1542,30 +1591,34 @@ func OnPartitionsAssigned(onAssigned func(context.Context, *Client, map[string][
 // autocommitting), it is highly recommended to do a proper blocking commit in
 // OnPartitionsRevoked.
 //
-// This function is not called concurrent with any other On callback, and this
-// function is given a new map that the user is free to modify. This function
-// can be called at any time you are polling or processing records. If you want
-// to ensure this function is called serially with processing, consider the
-// BlockRebalanceOnPoll option.
+// This function is not called concurrent with any other OnPartitions callback,
+// and this function is given a new map that the user is free to modify.
+//
+// This function can be called at any time you are polling or processing
+// records. If you want to ensure this function is called serially with
+// processing, consider the BlockRebalanceOnPoll option.
+//
+// This function is called if a "fatal" group error is encountered and you have
+// not set [OnPartitionsLost]. See OnPartitionsLost for more details.
 func OnPartitionsRevoked(onRevoked func(context.Context, *Client, map[string][]int32)) GroupOpt {
 	return groupOpt{func(cfg *cfg) { cfg.onRevoked, cfg.setRevoked = onRevoked, true }}
 }
 
 // OnPartitionsLost sets the function to be called on "fatal" group errors,
 // such as IllegalGeneration, UnknownMemberID, and authentication failures.
-// This function differs from OnPartitionsRevoked in that it is unlikely that
+// This function differs from [OnPartitionsRevoked] in that it is unlikely that
 // commits will succeed when partitions are outright lost, whereas commits
 // likely will succeed when revoking partitions.
 //
-// If this is not set, you will not know when a group error occurs that
-// forcefully loses all partitions. If you wish to use the same callback for
-// lost and revoked, you can use OnPartitionsLostAsRevoked as a shortcut.
+// Because this function is called on any fatal group error, it is possible for
+// this function to be called without the group ever being joined.
 //
-// This function is not called concurrent with any other On callback, and this
-// function is given a new map that the user is free to modify. This function
-// can be called at any time you are polling or processing records. If you want
-// to ensure this function is called serially with processing, consider the
-// BlockRebalanceOnPoll option.
+// This function is not called concurrent with any other OnPartitions callback,
+// and this function is given a new map that the user is free to modify.
+//
+// This function can be called at any time you are polling or processing
+// records. If you want to ensure this function is called serially with
+// processing, consider the BlockRebalanceOnPoll option.
 func OnPartitionsLost(onLost func(context.Context, *Client, map[string][]int32)) GroupOpt {
 	return groupOpt{func(cfg *cfg) { cfg.onLost, cfg.setLost = onLost, true }}
 }

@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-type Options func(*Messanger) error
+type Options func(*Messenger) error
 
-// HTTPClient will add http client for Slack messanger
+// HTTPClient will add http client for Slack Messenger
 func HTTPClient(hc *http.Client) Options {
-	return func(s *Messanger) error {
+	return func(s *Messenger) error {
 		if hc == nil {
 			return fmt.Errorf("you must provide valid http client")
 		}
@@ -21,7 +21,7 @@ func HTTPClient(hc *http.Client) Options {
 
 // SlackChannel will add slack channel name
 func SlackChannel(sl string) Options {
-	return func(s *Messanger) error {
+	return func(s *Messenger) error {
 		s.slackChannel = strings.Trim(sl, " \t")
 		if len(s.slackChannel) == 0 {
 			return fmt.Errorf("slack channel must be provided")

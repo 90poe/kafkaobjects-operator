@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/90poe/kafkaobjects-operator/internal/env"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kversion"
 )
@@ -81,9 +80,6 @@ func TLSKey(key string) Option {
 // MaxPartsPerTopic is option function to set Maximum Partitions per Topic
 func MaxPartsPerTopic(max uint) Option {
 	return func(m *ClusterConfig) error {
-		if max == 0 {
-			max = env.DefaultMaxParts
-		}
 		m.maxPartsPerTopic = max
 		return nil
 	}

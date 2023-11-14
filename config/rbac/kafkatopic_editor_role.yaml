@@ -6,13 +6,13 @@ metadata:
     app.kubernetes.io/name: clusterrole
     app.kubernetes.io/instance: kafkatopic-editor-role
     app.kubernetes.io/component: rbac
-    app.kubernetes.io/created-by: kafkaobjects-operator
-    app.kubernetes.io/part-of: kafkaobjects-operator
+    app.kubernetes.io/created-by: kafkaobjects-operator-v2
+    app.kubernetes.io/part-of: kafkaobjects-operator-v2
     app.kubernetes.io/managed-by: kustomize
   name: kafkatopic-editor-role
 rules:
 - apiGroups:
-  - xo.ninetypercent.io
+  - xo.90poe.io
   resources:
   - kafkatopics
   verbs:
@@ -24,7 +24,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - xo.ninetypercent.io
+  - xo.90poe.io
   resources:
   - kafkatopics/status
   verbs:

@@ -41,8 +41,16 @@ func (o Offset) String() string {
 		return fmt.Sprintf("{%d e%d ce%d}", o.at, o.epoch, o.currentEpoch)
 	} else if o.relative > 0 {
 		return fmt.Sprintf("{%d+%d e%d ce%d}", o.at, o.relative, o.epoch, o.currentEpoch)
-	} else {
-		return fmt.Sprintf("{%d-%d e%d ce%d}", o.at, -o.relative, o.epoch, o.currentEpoch)
+	}
+	return fmt.Sprintf("{%d-%d e%d ce%d}", o.at, -o.relative, o.epoch, o.currentEpoch)
+}
+
+// EpochOffset returns this offset as an EpochOffset, allowing visibility into
+// what this offset actually currently is.
+func (o Offset) EpochOffset() EpochOffset {
+	return EpochOffset{
+		Epoch:  o.epoch,
+		Offset: o.at,
 	}
 }
 
@@ -153,6 +161,7 @@ func (o Offset) At(at int64) Offset {
 
 type consumer struct {
 	bufferedRecords atomicI64
+	bufferedBytes   atomicI64
 
 	cl *Client
 
@@ -187,6 +196,7 @@ type consumer struct {
 	sessionChangeMu sync.Mutex
 
 	session atomic.Value // *consumerSession
+	kill    atomic.Bool
 
 	usingCursors usedCursors
 
@@ -275,6 +285,13 @@ func (cl *Client) BufferedFetchRecords() int64 {
 	return cl.consumer.bufferedRecords.Load()
 }
 
+// BufferedFetchBytes returns the number of bytes currently buffered from
+// fetching within the client. This is the sum of all keys, values, and header
+// keys/values. See the related [BufferedFetchRecords] for more information.
+func (cl *Client) BufferedFetchBytes() int64 {
+	return cl.consumer.bufferedBytes.Load()
+}
+
 type usedCursors map[*cursor]struct{}
 
 func (u *usedCursors) use(c *cursor) {
@@ -316,7 +333,8 @@ func (c *consumer) addSourceReadyForDraining(source *source) {
 
 // addFakeReadyForDraining saves a fake fetch that has important partition
 // errors--data loss or auth failures.
-func (c *consumer) addFakeReadyForDraining(topic string, partition int32, err error) {
+func (c *consumer) addFakeReadyForDraining(topic string, partition int32, err error, why string) {
+	c.cl.cfg.logger.Log(LogLevelInfo, "injecting fake fetch with an error", "err", err, "why", why)
 	c.sourcesReadyMu.Lock()
 	c.fakeReadyForDraining = append(c.fakeReadyForDraining, Fetch{Topics: []FetchTopic{{
 		Topic: topic,
@@ -329,7 +347,9 @@ func (c *consumer) addFakeReadyForDraining(topic string, partition int32, err er
 	c.sourcesReadyCond.Broadcast()
 }
 
-func errFetch(err error) Fetches {
+// NewErrFetch returns a fake fetch containing a single empty topic with a
+// single zero partition with the given error.
+func NewErrFetch(err error) Fetches {
 	return []Fetch{{
 		Topics: []FetchTopic{{
 			Topic: "",
@@ -397,7 +417,7 @@ func (cl *Client) PollRecords(ctx context.Context, maxPollRecords int) Fetches {
 	if ctx != nil {
 		select {
 		case <-ctx.Done():
-			return errFetch(ctx.Err())
+			return NewErrFetch(ctx.Err())
 		default:
 		}
 	}
@@ -412,6 +432,8 @@ func (cl *Client) PollRecords(ctx context.Context, maxPollRecords int) Fetches {
 				}
 			}()
 		}
+
+		paused := c.loadPaused()
 
 		// A group can grab the consumer lock then the group mu and
 		// assign partitions. The group mu is grabbed to update its
@@ -431,13 +453,13 @@ func (cl *Client) PollRecords(ctx context.Context, maxPollRecords int) Fetches {
 		c.sourcesReadyMu.Lock()
 		if maxPollRecords < 0 {
 			for _, ready := range c.sourcesReadyForDraining {
-				fetches = append(fetches, ready.takeBuffered())
+				fetches = append(fetches, ready.takeBuffered(paused))
 			}
 			c.sourcesReadyForDraining = nil
 		} else {
 			for len(c.sourcesReadyForDraining) > 0 && maxPollRecords > 0 {
 				source := c.sourcesReadyForDraining[0]
-				fetch, taken, drained := source.takeNBuffered(maxPollRecords)
+				fetch, taken, drained := source.takeNBuffered(paused, maxPollRecords)
 				if drained {
 					c.sourcesReadyForDraining = c.sourcesReadyForDraining[1:]
 				}
@@ -485,7 +507,7 @@ func (cl *Client) PollRecords(ctx context.Context, maxPollRecords int) Fetches {
 		defer c.sourcesReadyMu.Unlock()
 		defer close(done)
 
-		for !quit && len(c.sourcesReadyForDraining) == 0 {
+		for !quit && len(c.sourcesReadyForDraining) == 0 && len(c.fakeReadyForDraining) == 0 {
 			c.sourcesReadyCond.Wait()
 		}
 	}()
@@ -500,10 +522,10 @@ func (cl *Client) PollRecords(ctx context.Context, maxPollRecords int) Fetches {
 	select {
 	case <-cl.ctx.Done():
 		exit()
-		return errFetch(ErrClientClosed)
+		return NewErrFetch(ErrClientClosed)
 	case <-ctx.Done():
 		exit()
-		return errFetch(ctx.Err())
+		return NewErrFetch(ctx.Err())
 	case <-done:
 	}
 
@@ -537,10 +559,6 @@ func (cl *Client) UpdateFetchMaxBytes(maxBytes, maxPartBytes int32) {
 // You can call this function with no topics to simply receive the list of
 // currently paused topics.
 //
-// In contrast to the canonical Java client, this function does not clear
-// anything currently buffered. Buffered fetches containing paused topics are
-// still returned from polling.
-//
 // Pausing topics is independent from pausing individual partitions with the
 // PauseFetchPartitions method. If you pause partitions for a topic with
 // PauseFetchPartitions, and then pause that same topic with PauseFetchTopics,
@@ -551,10 +569,8 @@ func (cl *Client) PauseFetchTopics(topics ...string) []string {
 	if len(topics) == 0 {
 		return c.loadPaused().pausedTopics()
 	}
-
 	c.pausedMu.Lock()
 	defer c.pausedMu.Unlock()
-
 	paused := c.clonePaused()
 	paused.addTopics(topics...)
 	c.storePaused(paused)
@@ -566,10 +582,6 @@ func (cl *Client) PauseFetchTopics(topics ...string) []string {
 // resumed. You can call this function with no partitions to simply receive the
 // list of currently paused partitions.
 //
-// In contrast to the canonical Java client, this function does not clear
-// anything currently buffered. Buffered fetches containing paused partitions
-// are still returned from polling.
-//
 // Pausing individual partitions is independent from pausing topics with the
 // PauseFetchTopics method. If you pause partitions for a topic with
 // PauseFetchPartitions, and then pause that same topic with PauseFetchTopics,
@@ -580,10 +592,8 @@ func (cl *Client) PauseFetchPartitions(topicPartitions map[string][]int32) map[s
 	if len(topicPartitions) == 0 {
 		return c.loadPaused().pausedPartitions()
 	}
-
 	c.pausedMu.Lock()
 	defer c.pausedMu.Unlock()
-
 	paused := c.clonePaused()
 	paused.addPartitions(topicPartitions)
 	c.storePaused(paused)
@@ -748,6 +758,91 @@ func (cl *Client) AddConsumeTopics(topics ...string) {
 	cl.triggerUpdateMetadataNow("from AddConsumeTopics")
 }
 
+// AddConsumePartitions adds new partitions to be consumed at the given
+// offsets. This function works only for direct, non-regex consumers.
+func (cl *Client) AddConsumePartitions(partitions map[string]map[int32]Offset) {
+	c := &cl.consumer
+	if c.d == nil || cl.cfg.regex {
+		return
+	}
+	var topics []string
+	for t, ps := range partitions {
+		if len(ps) == 0 {
+			delete(partitions, t)
+			continue
+		}
+		topics = append(topics, t)
+	}
+	if len(partitions) == 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.d.tps.storeTopics(topics)
+	for t, ps := range partitions {
+		if c.d.ps[t] == nil {
+			c.d.ps[t] = make(map[int32]Offset)
+		}
+		for p, o := range ps {
+			c.d.m.add(t, p)
+			c.d.ps[t][p] = o
+		}
+	}
+	cl.triggerUpdateMetadataNow("from AddConsumePartitions")
+}
+
+// RemoveConsumePartitions removes partitions from being consumed. This
+// function works only for direct, non-regex consumers.
+//
+// This method does not purge the concept of any topics from the client -- if
+// you remove all partitions from a topic that was being consumed, metadata
+// fetches will still occur for the topic. If you want to remove the topic
+// entirely, use PurgeTopicsFromClient.
+//
+// If you specified ConsumeTopics and this function removes all partitions for
+// a topic, the topic will no longer be consumed.
+func (cl *Client) RemoveConsumePartitions(partitions map[string][]int32) {
+	c := &cl.consumer
+	if c.d == nil || cl.cfg.regex {
+		return
+	}
+	for t, ps := range partitions {
+		if len(ps) == 0 {
+			delete(partitions, t)
+			continue
+		}
+	}
+	if len(partitions) == 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	removeOffsets := make(map[string]map[int32]Offset, len(partitions))
+	for t, ps := range partitions {
+		removePartitionOffsets := make(map[int32]Offset, len(ps))
+		for _, p := range ps {
+			removePartitionOffsets[p] = Offset{}
+		}
+		removeOffsets[t] = removePartitionOffsets
+	}
+
+	c.assignPartitions(removeOffsets, assignInvalidateMatching, c.d.tps, fmt.Sprintf("remove of %v requested", partitions))
+	for t, ps := range partitions {
+		for _, p := range ps {
+			c.d.using.remove(t, p)
+			c.d.m.remove(t, p)
+			delete(c.d.ps[t], p)
+		}
+		if len(c.d.ps[t]) == 0 {
+			delete(c.d.ps, t)
+		}
+	}
+}
+
 // assignHow controls how assignPartitions operates.
 type assignHow int8
 
@@ -820,9 +915,19 @@ func (f fmtAssignment) String() string {
 	return sb.String()
 }
 
-// assignPartitions, called under the consumer's mu, is used to set new
-// cursors or add to the existing cursors.
+// assignPartitions, called under the consumer's mu, is used to set new cursors
+// or add to the existing cursors.
+//
+// We do not need to pass tps when we are bumping the session or when we are
+// invalidating all. All other cases, we want the tps -- the logic below does
+// not fully differentiate needing to start a new session vs. just reusing the
+// old (third if case below)
 func (c *consumer) assignPartitions(assignments map[string]map[int32]Offset, how assignHow, tps *topicsPartitions, why string) {
+	if c.mu.TryLock() {
+		c.mu.Unlock()
+		panic("assignPartitions called without holding the consumer lock, this is a bug in franz-go, please open an issue at github.com/twmb/franz-go")
+	}
+
 	// The internal code can avoid giving an assign reason in cases where
 	// the caller logs itself immediately before assigning. We only log if
 	// there is a reason.
@@ -944,7 +1049,7 @@ func (c *consumer) assignPartitions(assignments map[string]map[int32]Offset, how
 
 	// This assignment could contain nothing (for the purposes of
 	// invalidating active fetches), so we only do this if needed.
-	if len(assignments) == 0 || how == assignInvalidateMatching || how == assignPurgeMatching || how == assignSetMatching {
+	if len(assignments) == 0 || how != assignWithoutInvalidating {
 		return
 	}
 
@@ -1001,8 +1106,13 @@ func (c *consumer) assignPartitions(assignments map[string]map[int32]Offset, how
 			}
 
 			// If an exact offset is specified and we have loaded
-			// the partition, we use it. Without an epoch, if it is
-			// out of bounds, we just reset appropriately.
+			// the partition, we use it. We have to use epoch -1
+			// rather than the latest loaded epoch on the partition
+			// because the offset being requested to use could be
+			// from an epoch after OUR loaded epoch. Otherwise, we
+			// could update the metadata, see the later epoch,
+			// request the end offset for our prior epoch, and then
+			// think data loss occurred.
 			//
 			// If an offset is unspecified or we have not loaded
 			// the partition, we list offsets to find out what to
@@ -1012,7 +1122,7 @@ func (c *consumer) assignPartitions(assignments map[string]map[int32]Offset, how
 				cursor := part.cursor
 				cursor.setOffset(cursorOffset{
 					offset:            offset.at,
-					lastConsumedEpoch: part.leaderEpoch,
+					lastConsumedEpoch: -1,
 				})
 				cursor.allowUsable()
 				c.usingCursors.use(cursor)
@@ -1130,6 +1240,15 @@ const (
 	loadTypeList listOrEpochLoadType = iota
 	loadTypeEpoch
 )
+
+func (l listOrEpochLoadType) String() string {
+	switch l {
+	case loadTypeList:
+		return "list"
+	default:
+		return "epoch"
+	}
+}
 
 // adds an offset to be loaded, ensuring it exists only in the final loadType.
 func (l *listOrEpochLoads) addLoad(t string, p int32, loadType listOrEpochLoadType, load offsetLoad) {
@@ -1437,7 +1556,7 @@ func (c *consumer) stopSession() (listOrEpochLoads, *topicsPartitions) {
 	session := c.loadSession()
 
 	if session == noConsumerSession {
-		return listOrEpochLoads{}, noTopicsPartitions // we had no session
+		return listOrEpochLoads{}, nil // we had no session
 	}
 
 	// Before storing noConsumerSession, cancel our old. This pairs
@@ -1493,6 +1612,9 @@ func (c *consumer) stopSession() (listOrEpochLoads, *topicsPartitions) {
 // 1 worker allows for initialization work to prevent the session from being
 // immediately stopped.
 func (c *consumer) startNewSession(tps *topicsPartitions) *consumerSession {
+	if c.kill.Load() {
+		tps = nil
+	}
 	session := c.newConsumerSession(tps)
 	c.session.Store(session)
 
@@ -1520,6 +1642,15 @@ func (c *consumer) startNewSession(tps *topicsPartitions) *consumerSession {
 // the context of a consumer session.
 func (s *consumerSession) listOrEpoch(waiting listOrEpochLoads, immediate bool, why string) {
 	defer s.decWorker()
+
+	// It is possible for a metadata update to try to migrate partition
+	// loads if the update moves partitions between brokers. If we are
+	// closing the client, the consumer session could already be stopped,
+	// but this stops before the metadata goroutine is killed. So, if we
+	// are in this function but actually have no session, we return.
+	if s == noConsumerSession {
+		return
+	}
 
 	wait := true
 	if immediate {
@@ -1632,14 +1763,16 @@ func (s *consumerSession) handleListOrEpochResults(loaded loadedOffsets) (reload
 	// guard this entire function.
 
 	debug := s.c.cl.cfg.logger.Level() >= LogLevelDebug
-	type offsetEpoch struct {
-		Offset      int64
-		LeaderEpoch int32
+
+	var using map[string]map[int32]EpochOffset
+	type epochOffsetWhy struct {
+		EpochOffset
+		error
 	}
-	var using, reloading map[string]map[int32]offsetEpoch
+	var reloading map[string]map[int32]epochOffsetWhy
 	if debug {
-		using = make(map[string]map[int32]offsetEpoch)
-		reloading = make(map[string]map[int32]offsetEpoch)
+		using = make(map[string]map[int32]EpochOffset)
+		reloading = make(map[string]map[int32]epochOffsetWhy)
 		defer func() {
 			t := "list"
 			if loaded.loadType == loadTypeEpoch {
@@ -1659,10 +1792,10 @@ func (s *consumerSession) handleListOrEpochResults(loaded loadedOffsets) (reload
 			if debug {
 				tusing := using[load.topic]
 				if tusing == nil {
-					tusing = make(map[int32]offsetEpoch)
+					tusing = make(map[int32]EpochOffset)
 					using[load.topic] = tusing
 				}
-				tusing[load.partition] = offsetEpoch{load.offset, load.leaderEpoch}
+				tusing[load.partition] = EpochOffset{load.leaderEpoch, load.offset}
 			}
 
 			load.cursor.setOffset(cursorOffset{
@@ -1676,25 +1809,25 @@ func (s *consumerSession) handleListOrEpochResults(loaded loadedOffsets) (reload
 		var edl *ErrDataLoss
 		switch {
 		case errors.As(load.err, &edl):
-			s.c.addFakeReadyForDraining(load.topic, load.partition, load.err) // signal we lost data, but set the cursor to what we can
+			s.c.addFakeReadyForDraining(load.topic, load.partition, load.err, "notification of data loss") // signal we lost data, but set the cursor to what we can
 			use()
 
 		case load.err == nil:
 			use()
 
-		default: // from ErrorCode in a response
+		default: // from ErrorCode in a response, or broker request err, or request is canceled as our session is ending
 			reloads.addLoad(load.topic, load.partition, loaded.loadType, load.request)
-			if !kerr.IsRetriable(load.err) && !isRetryableBrokerErr(load.err) && !isDialErr(load.err) { // non-retryable response error; signal such in a response
-				s.c.addFakeReadyForDraining(load.topic, load.partition, load.err)
+			if !kerr.IsRetriable(load.err) && !isRetryableBrokerErr(load.err) && !isDialNonTimeoutErr(load.err) && !isContextErr(load.err) { // non-retryable response error; signal such in a response
+				s.c.addFakeReadyForDraining(load.topic, load.partition, load.err, fmt.Sprintf("notification of non-retryable error from %s request", loaded.loadType))
 			}
 
 			if debug {
 				treloading := reloading[load.topic]
 				if treloading == nil {
-					treloading = make(map[int32]offsetEpoch)
+					treloading = make(map[int32]epochOffsetWhy)
 					reloading[load.topic] = treloading
 				}
-				treloading[load.partition] = offsetEpoch{load.offset, load.leaderEpoch}
+				treloading[load.partition] = epochOffsetWhy{EpochOffset{load.leaderEpoch, load.offset}, load.err}
 			}
 		}
 	}

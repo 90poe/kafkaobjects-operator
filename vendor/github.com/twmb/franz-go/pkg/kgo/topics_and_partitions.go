@@ -108,6 +108,20 @@ func (m mtmps) onlyt(t string) bool {
 	return exists && len(ps) == 0
 }
 
+func (m mtmps) remove(t string, p int32) {
+	if m == nil {
+		return
+	}
+	mps, exists := m[t]
+	if !exists {
+		return
+	}
+	delete(mps, p)
+	if len(mps) == 0 {
+		delete(m, t)
+	}
+}
+
 ////////////
 // PAUSED // -- types for pausing topics and partitions
 ////////////
@@ -117,6 +131,14 @@ type pausedTopics map[string]pausedPartitions
 type pausedPartitions struct {
 	all bool
 	m   map[int32]struct{}
+}
+
+func (m pausedTopics) t(topic string) (pausedPartitions, bool) {
+	if len(m) == 0 { // potentially nil
+		return pausedPartitions{}, false
+	}
+	pps, exists := m[topic]
+	return pps, exists
 }
 
 func (m pausedTopics) has(topic string, partition int32) (paused bool) {
@@ -235,8 +257,6 @@ type topicPartitions struct {
 }
 
 func (t *topicPartitions) load() *topicPartitionsData { return t.v.Load().(*topicPartitionsData) }
-
-var noTopicsPartitions = newTopicsPartitions()
 
 func newTopicsPartitions() *topicsPartitions {
 	var t topicsPartitions
@@ -457,6 +477,8 @@ type topicPartitionsData struct {
 	isInternal         bool
 	partitions         []*topicPartition // partition num => partition
 	writablePartitions []*topicPartition // subset of above
+	topic              string
+	when               int64
 }
 
 // topicPartition contains all information from Kafka for a topic's partition,
