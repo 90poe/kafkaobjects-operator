@@ -1,4 +1,4 @@
-## Append samples of your project ##
+## Append samples you want in your CSV to this file as resources ##
 resources:
 - xo_v1alpha1_kafkatopic.yaml
 - xo_v1alpha1_kafkaschema.yaml

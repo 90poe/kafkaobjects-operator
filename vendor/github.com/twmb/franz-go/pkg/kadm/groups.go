@@ -208,7 +208,7 @@ func (ls ListedGroups) Groups() []string {
 // states. By default, this returns all groups. In almost all cases,
 // DescribeGroups is more useful.
 //
-// This may return *ShardErrors.
+// This may return *ShardErrors or *AuthError.
 func (cl *Client) ListGroups(ctx context.Context, filterStates ...string) (ListedGroups, error) {
 	req := kmsg.NewPtrListGroupsRequest()
 	req.StatesFilter = append(req.StatesFilter, filterStates...)
@@ -237,7 +237,7 @@ func (cl *Client) ListGroups(ctx context.Context, filterStates ...string) (Liste
 // DescribeGroups describes either all groups specified, or all groups in the
 // cluster if none are specified.
 //
-// This may return *ShardErrors.
+// This may return *ShardErrors or *AuthError.
 //
 // If no groups are specified and this method first lists groups, and list
 // groups returns a *ShardErrors, this function describes all successfully
@@ -830,6 +830,14 @@ func (cl *Client) FetchOffsets(ctx context.Context, group string) (OffsetRespons
 	return rs, nil
 }
 
+// FetchAllGroupTopics is a kadm "internal" topic name that can be used in
+// [FetchOffsetsForTopics]. By default, [FetchOffsetsForTopics] only returns
+// topics that are explicitly requested. Other topics that may be committed to
+// in the group are not returned. Using FetchAllRequestedTopics switches the
+// behavior to return the union of all committed topics and all requested
+// topics.
+const FetchAllGroupTopics = "|fetch-all-group-topics|"
+
 // FetchOffsetsForTopics is a helper function that returns the currently
 // committed offsets for the given group, as well as default -1 offsets for any
 // topic/partition that does not yet have a commit.
@@ -838,9 +846,31 @@ func (cl *Client) FetchOffsets(ctx context.Context, group string) (OffsetRespons
 // error. The returned offset responses are ready to be used or converted
 // directly to pure offsets with `Into`, and again into kgo offsets with
 // another `Into`.
+//
+// By default, this function returns offsets for only the requested topics. You
+// can use the special "topic" [FetchAllGroupTopics] to return all committed-to
+// topics in addition to all requested topics.
 func (cl *Client) FetchOffsetsForTopics(ctx context.Context, group string, topics ...string) (OffsetResponses, error) {
 	os := make(Offsets)
 
+	var all bool
+	keept := topics[:0]
+	for _, topic := range topics {
+		if topic == FetchAllGroupTopics {
+			all = true
+			continue
+		}
+		keept = append(keept, topic)
+	}
+	topics = keept
+
+	if !all && len(topics) == 0 {
+		return make(OffsetResponses), nil
+	}
+
+	// We have to request metadata to learn all partitions in all the
+	// topics. The default returned offset for all partitions is filled in
+	// to be -1.
 	if len(topics) > 0 {
 		listed, err := cl.ListTopics(ctx, topics...)
 		if err != nil {
@@ -865,11 +895,29 @@ func (cl *Client) FetchOffsetsForTopics(ctx context.Context, group string, topic
 	if err := resps.Error(); err != nil {
 		return nil, fmt.Errorf("offset fetches had a load error, first error: %w", err)
 	}
+
+	// For any topic (and any partition) we explicitly asked for, if the
+	// partition does not exist in the response, we fill the default -1
+	// from above.
 	os.Each(func(o Offset) {
 		if _, ok := resps.Lookup(o.Topic, o.Partition); !ok {
 			resps.Add(OffsetResponse{Offset: o})
 		}
 	})
+
+	// If we are not requesting all group offsets, then we strip any topic
+	// that was not explicitly requested.
+	if !all {
+		tset := make(map[string]struct{})
+		for _, t := range topics {
+			tset[t] = struct{}{}
+		}
+		for t := range resps {
+			if _, ok := tset[t]; !ok {
+				delete(resps, t)
+			}
+		}
+	}
 	return resps, nil
 }
 
@@ -902,7 +950,7 @@ func (rs FetchOffsetsResponses) EachError(fn func(FetchOffsetsResponse)) {
 func (rs FetchOffsetsResponses) AllFailed() bool {
 	var n int
 	rs.EachError(func(FetchOffsetsResponse) { n++ })
-	return n == len(rs)
+	return len(rs) > 0 && n == len(rs)
 }
 
 // CommittedPartitions returns the set of unique topics and partitions that
@@ -1114,7 +1162,9 @@ func (cl *Client) DeleteOffsets(ctx context.Context, group string, s TopicsSet) 
 type GroupMemberLag struct {
 	// Member is a reference to the group member consuming this partition.
 	// If the group is in state Empty, the member will be nil.
-	Member *DescribedGroupMember
+	Member    *DescribedGroupMember
+	Topic     string // Topic is the topic this lag is for.
+	Partition int32  // Partition is the partition this lag is for.
 
 	Commit Offset       // Commit is this member's current offset commit.
 	End    ListedOffset // EndOffset is a reference to the end offset of this partition.
@@ -1153,13 +1203,13 @@ func (l GroupLag) Sorted() []GroupMemberLag {
 	}
 	sort.Slice(all, func(i, j int) bool {
 		l, r := all[i], all[j]
-		if l.End.Topic < r.End.Topic {
+		if l.Topic < r.Topic {
 			return true
 		}
-		if l.End.Topic > r.End.Topic {
+		if l.Topic > r.Topic {
 			return false
 		}
-		return l.End.Partition < r.End.Partition
+		return l.Partition < r.Partition
 	})
 	return all
 }
@@ -1219,6 +1269,209 @@ func (l GroupTopicsLag) Sorted() []TopicLag {
 		return all[i].Topic < all[j].Topic
 	})
 	return all
+}
+
+// DescribedGroupLag contains a described group and its lag, or the errors that
+// prevent the lag from being calculated.
+type DescribedGroupLag struct {
+	Group string // Group is the group name.
+
+	Coordinator  BrokerDetail           // Coordinator is the coordinator broker for this group.
+	State        string                 // State is the state this group is in (Empty, Dead, Stable, etc.).
+	ProtocolType string                 // ProtocolType is the type of protocol the group is using, "consumer" for normal consumers, "connect" for Kafka connect.
+	Protocol     string                 // Protocol is the partition assignor strategy this group is using.
+	Members      []DescribedGroupMember // Members contains the members of this group sorted first by InstanceID, or if nil, by MemberID.
+	Lag          GroupLag               // Lag is the lag for the group.
+
+	DescribeErr error // DescribeErr is the error returned from describing the group, if any.
+	FetchErr    error // FetchErr is the error returned from fetching offsets, if any.
+}
+
+// Err returns the first of DescribeErr or FetchErr that is non-nil.
+func (l *DescribedGroupLag) Error() error {
+	if l.DescribeErr != nil {
+		return l.DescribeErr
+	}
+	return l.FetchErr
+}
+
+// DescribedGroupLags is a map of group names to the described group with its
+// lag, or error for those groups.
+type DescribedGroupLags map[string]DescribedGroupLag
+
+// Sorted returns all lags sorted by group name.
+func (ls DescribedGroupLags) Sorted() []DescribedGroupLag {
+	s := make([]DescribedGroupLag, 0, len(ls))
+	for _, l := range ls {
+		s = append(s, l)
+	}
+	sort.Slice(s, func(i, j int) bool { return s[i].Group < s[j].Group })
+	return s
+}
+
+// EachError calls fn for every group that has a non-nil error.
+func (ls DescribedGroupLags) EachError(fn func(l DescribedGroupLag)) {
+	for _, l := range ls {
+		if l.Error() != nil {
+			fn(l)
+		}
+	}
+}
+
+// Each calls fn for every group.
+func (ls DescribedGroupLags) Each(fn func(l DescribedGroupLag)) {
+	for _, l := range ls {
+		fn(l)
+	}
+}
+
+// Error iterates over all groups and returns the first error encountered, if
+// any.
+func (ls DescribedGroupLags) Error() error {
+	for _, l := range ls {
+		if l.Error() != nil {
+			return l.Error()
+		}
+	}
+	return nil
+}
+
+// Ok returns true if there are no errors. This is a shortcut for ls.Error() ==
+// nil.
+func (ls DescribedGroupLags) Ok() bool {
+	return ls.Error() == nil
+}
+
+// Lag returns the lag for all input groups. This function is a shortcut for
+// the steps required to use CalculateGroupLag properly, with some opinionated
+// choices for error handling since calculating lag is multi-request process.
+// If a group cannot be described or the offsets cannot be fetched, an error is
+// returned for the group. If any topic cannot have its end offsets listed, the
+// lag for the partition has a corresponding error. If any request fails with
+// an auth error, this returns *AuthError.
+func (cl *Client) Lag(ctx context.Context, groups ...string) (DescribedGroupLags, error) {
+	set := make(map[string]struct{}, len(groups))
+	for _, g := range groups {
+		set[g] = struct{}{}
+	}
+	rem := func() []string {
+		groups = groups[:0]
+		for g := range set {
+			groups = append(groups, g)
+		}
+		return groups
+	}
+	lags := make(DescribedGroupLags)
+
+	described, err := cl.DescribeGroups(ctx, rem()...)
+	// For auth err: always return.
+	// For shard errors, if we had some partial success, then we continue
+	// to the rest of the logic in this function.
+	// If every shard failed, or on all other errors, we return.
+	var ae *AuthError
+	var se *ShardErrors
+	switch {
+	case errors.As(err, &ae):
+		return nil, err
+	case errors.As(err, &se) && !se.AllFailed:
+		for _, se := range se.Errs {
+			for _, g := range se.Req.(*kmsg.DescribeGroupsRequest).Groups {
+				lags[g] = DescribedGroupLag{
+					Group:       g,
+					Coordinator: se.Broker,
+					DescribeErr: se.Err,
+				}
+				delete(set, g)
+			}
+		}
+	case err != nil:
+		return nil, err
+	}
+	for _, g := range described {
+		lags[g.Group] = DescribedGroupLag{
+			Group:        g.Group,
+			Coordinator:  g.Coordinator,
+			State:        g.State,
+			ProtocolType: g.ProtocolType,
+			Protocol:     g.Protocol,
+			Members:      g.Members,
+			DescribeErr:  g.Err,
+		}
+		if g.Err != nil {
+			delete(set, g.Group)
+		}
+	}
+	if len(set) == 0 {
+		return lags, nil
+	}
+
+	// Same thought here. For auth errors, we always return.
+	// If a group offset fetch failed, we delete it from described
+	// because we cannot calculate lag for it.
+	fetched := cl.FetchManyOffsets(ctx, rem()...)
+	for _, r := range fetched {
+		switch {
+		case errors.As(r.Err, &ae):
+			return nil, err
+		case r.Err != nil:
+			l := lags[r.Group]
+			l.FetchErr = r.Err
+			lags[r.Group] = l
+			delete(set, r.Group)
+			delete(described, r.Group)
+		}
+	}
+	if len(set) == 0 {
+		return lags, nil
+	}
+
+	// Lastly, we have to list the end offset for all assigned and
+	// committed partitions.
+	var listed ListedOffsets
+	listPartitions := described.AssignedPartitions()
+	listPartitions.Merge(fetched.CommittedPartitions())
+	if topics := listPartitions.Topics(); len(topics) > 0 {
+		listed, err = cl.ListEndOffsets(ctx, topics...)
+		// As above: return on auth error. If there are shard errors,
+		// the topics will be missing in the response and then
+		// CalculateGroupLag will return UnknownTopicOrPartition.
+		switch {
+		case errors.As(err, &ae):
+			return nil, err
+		case errors.As(err, &se):
+			// do nothing: these show up as errListMissing
+		case err != nil:
+			return nil, err
+		}
+		// For anything that lists with a single -1 partition, the
+		// topic does not exist. We add an UnknownTopicOrPartition
+		// error for all partitions that were committed to, so that
+		// this shows up in the lag output as UnknownTopicOrPartition
+		// rather than errListMissing.
+		for t, ps := range listed {
+			if len(ps) != 1 {
+				continue
+			}
+			if _, ok := ps[-1]; !ok {
+				continue
+			}
+			delete(ps, -1)
+			for p := range listPartitions[t] {
+				ps[p] = ListedOffset{
+					Topic:     t,
+					Partition: p,
+					Err:       kerr.UnknownTopicOrPartition,
+				}
+			}
+		}
+	}
+
+	for _, g := range described {
+		l := lags[g.Group]
+		l.Lag = CalculateGroupLag(g, fetched[g.Group].Fetched, listed)
+		lags[g.Group] = l
+	}
+	return lags, nil
 }
 
 // CalculateGroupLag returns the per-partition lag of all members in a group.
@@ -1312,11 +1565,13 @@ func CalculateGroupLag(
 				}
 
 				lt[p] = GroupMemberLag{
-					Member: &group.Members[mi],
-					Commit: pcommit.Offset,
-					End:    pend,
-					Lag:    lag,
-					Err:    perr,
+					Member:    &group.Members[mi],
+					Topic:     t.Topic,
+					Partition: p,
+					Commit:    pcommit.Offset,
+					End:       pend,
+					Lag:       lag,
+					Err:       perr,
 				}
 
 			}
@@ -1363,10 +1618,12 @@ func calculateEmptyLag(commit OffsetResponses, endOffsets ListedOffsets) GroupLa
 			}
 
 			lt[p] = GroupMemberLag{
-				Commit: pcommit.Offset,
-				End:    pend,
-				Lag:    lag,
-				Err:    perr,
+				Topic:     t,
+				Partition: p,
+				Commit:    pcommit.Offset,
+				End:       pend,
+				Lag:       lag,
+				Err:       perr,
 			}
 		}
 	}
@@ -1393,10 +1650,12 @@ func calculateEmptyLag(commit OffsetResponses, endOffsets ListedOffsets) GroupLa
 				lag = pend.Offset
 			}
 			lt[p] = GroupMemberLag{
-				Commit: pcommit,
-				End:    pend,
-				Lag:    lag,
-				Err:    perr,
+				Topic:     t,
+				Partition: p,
+				Commit:    pcommit,
+				End:       pend,
+				Lag:       lag,
+				Err:       perr,
 			}
 		}
 	}

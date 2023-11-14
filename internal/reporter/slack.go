@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-type Messanger struct {
+type Messenger struct {
 	httpClient   *http.Client
 	slackChannel string
 	slackClient  *slack.Client
@@ -25,15 +25,15 @@ const (
 	BotLogo         = "https://90poe-tools-infrastructure.s3.eu-west-1.amazonaws.com/images/k8s-logo.png"
 )
 
-func New(token string, options ...Options) (*Messanger, error) {
-	mess := &Messanger{
+func New(token string, options ...Options) (*Messenger, error) {
+	mess := &Messenger{
 		httpClient: &http.Client{},
 	}
 	var err error
 	for _, option := range options {
 		err = option(mess)
 		if err != nil {
-			return nil, fmt.Errorf("can't make new Messanger object: %w", err)
+			return nil, fmt.Errorf("can't make new Messenger object: %w", err)
 		}
 	}
 	// Set default http client timeout if not specified
@@ -46,9 +46,12 @@ func New(token string, options ...Options) (*Messanger, error) {
 	return mess, nil
 }
 
-func (r *Messanger) Message(
+func (r *Messenger) Message(
 	messages []string,
 	title, color string) {
+	if r.slackClient == nil {
+		return
+	}
 	// system logger
 	reqLogger := log.FromContext(context.Background()).WithValues("reporter", "slack")
 	// Send message to slack

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -82,11 +83,22 @@ type promisedResp struct {
 	readEnqueue  time.Time
 }
 
+// NodeName returns the name of a node, given the kgo internal node ID.
+//
+// Internally, seed brokers are stored with very negative node IDs, and these
+// node IDs are visible in the BrokerMetadata struct. You can use NodeName to
+// convert the negative node ID into "seed_#". Brokers discovered through
+// metadata responses have standard non-negative numbers and this function just
+// returns the number as a string.
+func NodeName(nodeID int32) string {
+	return logID(nodeID)
+}
+
 func logID(id int32) string {
 	if id >= -10 {
 		return strconv.FormatInt(int64(id), 10)
 	}
-	return "seed " + strconv.FormatInt(int64(id)-math.MinInt32, 10)
+	return "seed_" + strconv.FormatInt(int64(id)-math.MinInt32, 10)
 }
 
 // BrokerMetadata is metadata for a broker.
@@ -96,7 +108,8 @@ type BrokerMetadata struct {
 	// NodeID is the broker node ID.
 	//
 	// Seed brokers will have very negative IDs; kgo does not try to map
-	// seed brokers to loaded brokers.
+	// seed brokers to loaded brokers. You can use NodeName to convert
+	// the seed node ID into a formatted string.
 	NodeID int32
 
 	// Port is the port of the broker.
@@ -936,7 +949,9 @@ func (cxn *brokerCxn) doSasl(authenticate bool) error {
 		if latencyMillis > minPessimismMillis {
 			minPessimismMillis = latencyMillis
 		}
-		maxPessimismMillis := float64(lifetimeMillis) * (0.05 - 0.03*cxn.b.cl.rng()) // 95 to 98% of lifetime (pessimism 2% to 5%)
+		var random float64
+		cxn.b.cl.rng(func(r *rand.Rand) { random = r.Float64() })
+		maxPessimismMillis := float64(lifetimeMillis) * (0.05 - 0.03*random) // 95 to 98% of lifetime (pessimism 2% to 5%)
 
 		// Our minimum lifetime is always 1s (or latency, if larger).
 		// When our max pessimism becomes more than min pessimism,
@@ -1154,7 +1169,7 @@ func (cxn *brokerCxn) parseReadSize(sizeBuf []byte) (int32, error) {
 		return 0, fmt.Errorf("invalid negative response size %d", size)
 	}
 	if maxSize := cxn.b.cl.cfg.maxBrokerReadBytes; size > maxSize {
-		if maxSize == 0x48545450 { // "HTTP"
+		if size == 0x48545450 { // "HTTP"
 			return 0, fmt.Errorf("invalid large response size %d > limit %d; the four size bytes are 'HTTP' in ascii, the beginning of an HTTP response; is your broker port correct?", size, maxSize)
 		}
 		// A TLS alert is 21, and a TLS alert has the version
@@ -1205,10 +1220,10 @@ func (cxn *brokerCxn) readResponse(
 	bytesRead, buf, readWait, timeToRead, readErr := cxn.readConn(ctx, timeout, readEnqueue)
 
 	cxn.cl.cfg.hooks.each(func(h Hook) {
-		switch h := h.(type) {
-		case HookBrokerRead:
+		if h, ok := h.(HookBrokerRead); ok {
 			h.OnBrokerRead(cxn.b.meta, key, bytesRead, readWait, timeToRead, readErr)
-		case HookBrokerE2E:
+		}
+		if h, ok := h.(HookBrokerE2E); ok {
 			h.OnBrokerE2E(cxn.b.meta, key, BrokerE2E{
 				BytesWritten: bytesWritten,
 				BytesRead:    bytesRead,
@@ -1472,6 +1487,7 @@ func (cxn *brokerCxn) handleResp(pr promisedResp) {
 		if throttleResponse, ok := pr.resp.(kmsg.ThrottleResponse); ok {
 			millis, throttlesAfterResp := throttleResponse.Throttle()
 			if millis > 0 {
+				cxn.b.cl.cfg.logger.Log(LogLevelInfo, "broker is throttling us in response", "broker", logID(cxn.b.meta.NodeID), "req", kmsg.Key(pr.resp.Key()).Name(), "throttle_millis", millis, "throttles_after_resp", throttlesAfterResp)
 				if throttlesAfterResp {
 					throttleUntil := time.Now().Add(time.Millisecond * time.Duration(millis)).UnixNano()
 					if throttleUntil > cxn.throttleUntil.Load() {

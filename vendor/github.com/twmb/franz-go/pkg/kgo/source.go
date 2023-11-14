@@ -323,22 +323,97 @@ func (s *source) hook(f *Fetch, buffered, polled bool) {
 	})
 
 	var nrecs int
+	var nbytes int64
 	for i := range f.Topics {
 		t := &f.Topics[i]
 		for j := range t.Partitions {
-			nrecs += len(t.Partitions[j].Records)
+			p := &t.Partitions[j]
+			nrecs += len(p.Records)
+			for k := range p.Records {
+				nbytes += p.Records[k].userSize()
+			}
 		}
 	}
 	if buffered {
 		s.cl.consumer.bufferedRecords.Add(int64(nrecs))
+		s.cl.consumer.bufferedBytes.Add(nbytes)
 	} else {
 		s.cl.consumer.bufferedRecords.Add(-int64(nrecs))
+		s.cl.consumer.bufferedBytes.Add(-nbytes)
 	}
 }
 
 // takeBuffered drains a buffered fetch and updates offsets.
-func (s *source) takeBuffered() Fetch {
-	return s.takeBufferedFn(true, usedOffsets.finishUsingAllWithSet)
+func (s *source) takeBuffered(paused pausedTopics) Fetch {
+	if len(paused) == 0 {
+		return s.takeBufferedFn(true, usedOffsets.finishUsingAllWithSet)
+	}
+	var strip map[string]map[int32]struct{}
+	f := s.takeBufferedFn(true, func(os usedOffsets) {
+		for t, ps := range os {
+			// If the entire topic is paused, we allowUsable all
+			// and strip the topic entirely.
+			pps, ok := paused.t(t)
+			if !ok {
+				for _, o := range ps {
+					o.from.setOffset(o.cursorOffset)
+					o.from.allowUsable()
+				}
+				continue
+			}
+			if strip == nil {
+				strip = make(map[string]map[int32]struct{})
+			}
+			if pps.all {
+				for _, o := range ps {
+					o.from.allowUsable()
+				}
+				strip[t] = nil // initialize key, for existence-but-len-0 check below
+				continue
+			}
+			stript := make(map[int32]struct{})
+			for _, o := range ps {
+				if _, ok := pps.m[o.from.partition]; ok {
+					o.from.allowUsable()
+					stript[o.from.partition] = struct{}{}
+					continue
+				}
+				o.from.setOffset(o.cursorOffset)
+				o.from.allowUsable()
+			}
+			// We only add stript to strip if there are any
+			// stripped partitions. We could have a paused
+			// partition that is on another broker, while this
+			// broker has no paused partitions -- if we add stript
+			// here, our logic below (stripping this entire topic)
+			// is more confusing (present nil vs. non-present nil).
+			if len(stript) > 0 {
+				strip[t] = stript
+			}
+		}
+	})
+	if strip != nil {
+		keep := f.Topics[:0]
+		for _, t := range f.Topics {
+			stript, ok := strip[t.Topic]
+			if ok {
+				if len(stript) == 0 {
+					continue // stripping this entire topic
+				}
+				keepp := t.Partitions[:0]
+				for _, p := range t.Partitions {
+					if _, ok := stript[p.Partition]; ok {
+						continue
+					}
+					keepp = append(keepp, p)
+				}
+				t.Partitions = keepp
+			}
+			keep = append(keep, t)
+		}
+		f.Topics = keep
+	}
+	return f
 }
 
 func (s *source) discardBuffered() {
@@ -352,7 +427,7 @@ func (s *source) discardBuffered() {
 //
 // This returns the number of records taken and whether the source has been
 // completely drained.
-func (s *source) takeNBuffered(n int) (Fetch, int, bool) {
+func (s *source) takeNBuffered(paused pausedTopics, n int) (Fetch, int, bool) {
 	var r Fetch
 	var taken int
 
@@ -361,15 +436,44 @@ func (s *source) takeNBuffered(n int) (Fetch, int, bool) {
 	for len(bf.Topics) > 0 && n > 0 {
 		t := &bf.Topics[0]
 
-		r.Topics = append(r.Topics, *t)
-		rt := &r.Topics[len(r.Topics)-1]
-		rt.Partitions = nil
+		// If the topic is outright paused, we allowUsable all
+		// partitions in the topic and skip the topic entirely.
+		if paused.has(t.Topic, -1) {
+			bf.Topics = bf.Topics[1:]
+			for _, pCursor := range b.usedOffsets[t.Topic] {
+				pCursor.from.allowUsable()
+			}
+			delete(b.usedOffsets, t.Topic)
+			continue
+		}
+
+		var rt *FetchTopic
+		ensureTopicAdded := func() {
+			if rt != nil {
+				return
+			}
+			r.Topics = append(r.Topics, *t)
+			rt = &r.Topics[len(r.Topics)-1]
+			rt.Partitions = nil
+		}
 
 		tCursors := b.usedOffsets[t.Topic]
 
 		for len(t.Partitions) > 0 && n > 0 {
 			p := &t.Partitions[0]
 
+			if paused.has(t.Topic, p.Partition) {
+				t.Partitions = t.Partitions[1:]
+				pCursor := tCursors[p.Partition]
+				pCursor.from.allowUsable()
+				delete(tCursors, p.Partition)
+				if len(tCursors) == 0 {
+					delete(b.usedOffsets, t.Topic)
+				}
+				continue
+			}
+
+			ensureTopicAdded()
 			rt.Partitions = append(rt.Partitions, *p)
 			rp := &rt.Partitions[len(rt.Partitions)-1]
 
@@ -395,7 +499,7 @@ func (s *source) takeNBuffered(n int) (Fetch, int, bool) {
 				if len(tCursors) == 0 {
 					delete(b.usedOffsets, t.Topic)
 				}
-				break
+				continue
 			}
 
 			lastReturnedRecord := rp.Records[len(rp.Records)-1]
@@ -415,7 +519,7 @@ func (s *source) takeNBuffered(n int) (Fetch, int, bool) {
 
 	drained := len(bf.Topics) == 0
 	if drained {
-		s.takeBuffered()
+		s.takeBuffered(nil)
 	}
 	return r, taken, drained
 }
@@ -484,6 +588,23 @@ func (s *source) loopFetch() {
 
 	if session == noConsumerSession {
 		s.fetchState.hardFinish()
+		// It is possible that we were triggered to consume while we
+		// had no consumer session, and then *after* loopFetch loaded
+		// noConsumerSession, the session was saved and triggered to
+		// consume again. If this function is slow the first time
+		// around, it could still be running and about to hardFinish.
+		// The second trigger will do nothing, and then we hardFinish
+		// and block a new session from actually starting consuming.
+		//
+		// To guard against this, after we hard finish, we load the
+		// session again: if it is *not* noConsumerSession, we trigger
+		// attempting to consume again. Worst case, the trigger is
+		// useless and it will exit below when it builds an empty
+		// request.
+		sessionNow := consumer.loadSession()
+		if session != sessionNow {
+			s.maybeConsume()
+		}
 		return
 	}
 
@@ -624,7 +745,7 @@ func (s *source) fetch(consumerSession *consumerSession, doneFetch chan<- struct
 	}
 
 	var didBackoff bool
-	backoff := func() {
+	backoff := func(why interface{}) {
 		// We preemptively allow more fetches (since we are not buffering)
 		// and reset our session because of the error (who knows if kafka
 		// processed the request but the client failed to receive it).
@@ -633,7 +754,7 @@ func (s *source) fetch(consumerSession *consumerSession, doneFetch chan<- struct
 		s.session.reset()
 		didBackoff = true
 
-		s.cl.triggerUpdateMetadata(false, "opportunistic load during source backoff") // as good a time as any
+		s.cl.triggerUpdateMetadata(false, fmt.Sprintf("opportunistic load during source backoff: %v", why)) // as good a time as any
 		s.consecutiveFailures++
 		after := time.NewTimer(s.cl.cfg.retryBackoff(s.consecutiveFailures))
 		defer after.Stop()
@@ -652,7 +773,7 @@ func (s *source) fetch(consumerSession *consumerSession, doneFetch chan<- struct
 	// but that is fine; we may just re-request too early and fall into
 	// another backoff.
 	if err != nil {
-		backoff()
+		backoff(err)
 		return
 	}
 
@@ -663,8 +784,7 @@ func (s *source) fetch(consumerSession *consumerSession, doneFetch chan<- struct
 		reloadOffsets   listOrEpochLoads
 		preferreds      cursorPreferreds
 		allErrsStripped bool
-		updateMeta      bool
-		updateWhy       string
+		updateWhy       multiUpdateWhy
 		handled         = make(chan struct{})
 	)
 
@@ -675,7 +795,7 @@ func (s *source) fetch(consumerSession *consumerSession, doneFetch chan<- struct
 	// Processing the response only needs the source's nodeID and client.
 	go func() {
 		defer close(handled)
-		fetch, reloadOffsets, preferreds, allErrsStripped, updateMeta, updateWhy = s.handleReqResp(br, req, resp)
+		fetch, reloadOffsets, preferreds, allErrsStripped, updateWhy = s.handleReqResp(br, req, resp)
 	}()
 
 	select {
@@ -755,8 +875,21 @@ func (s *source) fetch(consumerSession *consumerSession, doneFetch chan<- struct
 		s.session.bumpEpoch(resp.SessionID)
 	}
 
-	if updateMeta && !reloadOffsets.loadWithSessionNow(consumerSession, updateWhy) {
-		s.cl.triggerUpdateMetadataNow(updateWhy)
+	// If we have a reason to update (per-partition fetch errors), and the
+	// reason is not just unknown topic or partition, then we immediately
+	// update metadata. We avoid updating for unknown because it _likely_
+	// means the topic does not exist and reloading is wasteful. We only
+	// trigger a metadata update if we have no reload offsets. Having
+	// reload offsets *always* triggers a metadata update.
+	if updateWhy != nil {
+		why := updateWhy.reason(fmt.Sprintf("fetch had inner topic errors from broker %d", s.nodeID))
+		if !reloadOffsets.loadWithSessionNow(consumerSession, why) {
+			if updateWhy.isOnly(kerr.UnknownTopicOrPartition) || updateWhy.isOnly(kerr.UnknownTopicID) {
+				s.cl.triggerUpdateMetadata(false, why)
+			} else {
+				s.cl.triggerUpdateMetadataNow(why)
+			}
+		}
 	}
 
 	if fetch.hasErrorsOrRecords() {
@@ -774,7 +907,7 @@ func (s *source) fetch(consumerSession *consumerSession, doneFetch chan<- struct
 		// fetching from topics that were deleted. We want to back off
 		// a bit rather than spin-loop immediately re-requesting
 		// deleted topics.
-		backoff()
+		backoff("empty fetch response due to all partitions having retryable errors")
 	}
 	return
 }
@@ -791,15 +924,22 @@ func (s *source) handleReqResp(br *broker, req *fetchRequest, resp *kmsg.FetchRe
 	reloadOffsets listOrEpochLoads,
 	preferreds cursorPreferreds,
 	allErrsStripped bool,
-	updateMeta bool,
-	why string,
+	updateWhy multiUpdateWhy,
 ) {
 	f = Fetch{Topics: make([]FetchTopic, 0, len(resp.Topics))}
 	var (
-		updateWhy       multiUpdateWhy
-		numErrsStripped int
-		kip320          = s.cl.supportsOffsetForLeaderEpoch()
+		debugWhyStripped multiUpdateWhy
+		numErrsStripped  int
+		kip320           = s.cl.supportsOffsetForLeaderEpoch()
 	)
+
+	strip := func(t string, p int32, err error) {
+		numErrsStripped++
+		if s.cl.cfg.logger.Level() < LogLevelDebug {
+			return
+		}
+		debugWhyStripped.add(t, p, err)
+	}
 
 	for _, rt := range resp.Topics {
 		topic := rt.Topic
@@ -852,7 +992,6 @@ func (s *source) handleReqResp(br *broker, req *fetchRequest, resp *kmsg.FetchRe
 
 			fp := partOffset.processRespPartition(br, rp, s.cl.decompressor, s.cl.cfg.hooks)
 			if fp.Err != nil {
-				updateMeta = true
 				updateWhy.add(topic, partition, fp.Err)
 			}
 
@@ -861,12 +1000,12 @@ func (s *source) handleReqResp(br *broker, req *fetchRequest, resp *kmsg.FetchRe
 			var keep bool
 			switch fp.Err {
 			default:
-				if kerr.IsRetriable(fp.Err) {
+				if kerr.IsRetriable(fp.Err) && !s.cl.cfg.keepRetryableFetchErrors {
 					// UnknownLeaderEpoch: our meta is newer than the broker we fetched from
 					// OffsetNotAvailable: fetched from out of sync replica or a behind in-sync one (KIP-392 case 1 and case 2)
 					// UnknownTopicID: kafka has not synced the state on all brokers
 					// And other standard retryable errors.
-					numErrsStripped++
+					strip(topic, partition, fp.Err)
 				} else {
 					// - bad auth
 					// - unsupported compression
@@ -887,17 +1026,19 @@ func (s *source) handleReqResp(br *broker, req *fetchRequest, resp *kmsg.FetchRe
 				// consume the topic again anymore. This is an error
 				// worth bubbling up.
 				//
-				// FUN FACT: Kafka will actually return this error
-				// for a brief window immediately after creating a
-				// topic for the first time, meaning the controller
-				// has not yet propagated to the leader that it is
-				// the leader of a new partition. We need to ignore
-				// this error for a _litttttlllleee bit_.
+				// Kafka will actually return this error for a brief
+				// window immediately after creating a topic for the
+				// first time, meaning the controller has not yet
+				// propagated to the leader that it is now the leader
+				// of a new partition. We need to ignore this error
+				// for a little bit.
 				if fails := partOffset.from.unknownIDFails.Add(1); fails > 5 {
 					partOffset.from.unknownIDFails.Add(-1)
 					keep = true
+				} else if s.cl.cfg.keepRetryableFetchErrors {
+					keep = true
 				} else {
-					numErrsStripped++
+					strip(topic, partition, fp.Err)
 				}
 
 			case kerr.OffsetOutOfRange:
@@ -992,7 +1133,11 @@ func (s *source) handleReqResp(br *broker, req *fetchRequest, resp *kmsg.FetchRe
 		}
 	}
 
-	return f, reloadOffsets, preferreds, req.numOffsets == numErrsStripped, updateMeta, updateWhy.reason("fetch had inner topic errors")
+	if s.cl.cfg.logger.Level() >= LogLevelDebug && len(debugWhyStripped) > 0 {
+		s.cl.cfg.logger.Log(LogLevelDebug, "fetch stripped partitions", "why", debugWhyStripped.reason(""))
+	}
+
+	return f, reloadOffsets, preferreds, req.numOffsets == numErrsStripped, updateWhy
 }
 
 // processRespPartition processes all records in all potentially compressed
@@ -1830,10 +1975,10 @@ func (f *fetchRequest) adjustPreferringLag() {
 
 func (*fetchRequest) Key() int16 { return 1 }
 func (f *fetchRequest) MaxVersion() int16 {
-	if f.disableIDs {
+	if f.disableIDs || f.session.disableIDs {
 		return 12
 	}
-	return 13
+	return 15
 }
 func (f *fetchRequest) SetVersion(v int16) { f.version = v }
 func (f *fetchRequest) GetVersion() int16  { return f.version }
@@ -1864,7 +2009,7 @@ func (f *fetchRequest) AppendTo(dst []byte) []byte {
 		partitions := f.usedOffsets[topic]
 
 		var reqTopic *kmsg.FetchRequestTopic
-		sessionTopic := f.session.lookupTopic(topic)
+		sessionTopic := f.session.lookupTopic(topic, f.topic2id)
 
 		var usedTopic map[int32]struct{}
 		if sessionUsed != nil {
@@ -1931,6 +2076,20 @@ func (f *fetchRequest) AppendTo(dst []byte) []byte {
 			}
 			if len(partitions) == 0 {
 				delete(f.session.used, topic)
+				id := f.session.t2id[topic]
+				delete(f.session.t2id, topic)
+				// If we deleted a topic that was missing an ID, then we clear the
+				// previous disableIDs state and potentially reenable it.
+				var noID [16]byte
+				if id == noID {
+					f.session.disableIDs = false
+					for _, id := range f.session.t2id {
+						if id == noID {
+							f.session.disableIDs = true
+							break
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1955,13 +2114,17 @@ type fetchSession struct {
 	epoch int32
 
 	used map[string]map[int32]fetchSessionOffsetEpoch // what we have in the session so far
+	t2id map[string][16]byte
 
-	killed bool // if we cannot use a session anymore
+	disableIDs bool // if anything in t2id has no ID
+	killed     bool // if we cannot use a session anymore
 }
 
 func (s *fetchSession) kill() {
 	s.epoch = -1
 	s.used = nil
+	s.t2id = nil
+	s.disableIDs = false
 	s.killed = true
 }
 
@@ -1974,6 +2137,8 @@ func (s *fetchSession) reset() {
 	}
 	s.epoch = 0
 	s.used = nil
+	s.t2id = nil
+	s.disableIDs = false
 }
 
 // bumpEpoch bumps the epoch and saves the session id.
@@ -1994,17 +2159,23 @@ func (s *fetchSession) bumpEpoch(id int32) {
 	s.id = id
 }
 
-func (s *fetchSession) lookupTopic(topic string) fetchSessionTopic {
+func (s *fetchSession) lookupTopic(topic string, t2id map[string][16]byte) fetchSessionTopic {
 	if s.killed {
 		return nil
 	}
 	if s.used == nil {
 		s.used = make(map[string]map[int32]fetchSessionOffsetEpoch)
+		s.t2id = make(map[string][16]byte)
 	}
 	t := s.used[topic]
 	if t == nil {
 		t = make(map[int32]fetchSessionOffsetEpoch)
 		s.used[topic] = t
+		id := t2id[topic]
+		s.t2id[topic] = id
+		if id == ([16]byte{}) {
+			s.disableIDs = true
+		}
 	}
 	return t
 }

@@ -92,3 +92,12 @@ func (c *Client) CreateSchema(schema *v1alpha1.KafkaSchemaSpec) error {
 
 	return err
 }
+
+// SchemaExists will check if a schema exists or return an error
+func (c *Client) SchemaExists(schemaName string) (bool, error) {
+	_, err := c.c.GetLatestSchema(schemaName)
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
+}

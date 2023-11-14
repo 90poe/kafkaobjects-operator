@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -23,19 +24,20 @@ func (c *ClusterClient) Close() {
 	c.kCl.Close()
 }
 
-func (c *ClusterClient) InsertTopic(topic *api.KafkaTopicSpec) error {
+// TopicExists will check if topic exists in Kafka cluster
+func (c *ClusterClient) TopicExists(topic *api.KafkaTopicSpec) (bool, error) {
 	// 1. Lets get topic list. We don't insert topic if it already exists
 	topics, err := c.getTopics()
 	if err != nil {
-		return fmt.Errorf("can't get topics: %w", err)
+		return false, fmt.Errorf("can't get topics: %w", err)
 	}
 	for _, t := range topics {
 		if t == topic.Name {
 			// we do not insert topic if it already exists
-			return nil
+			return true, nil
 		}
 	}
-	return c.createTopic(topic)
+	return false, nil
 }
 
 // getTopics would return Kafka topics
@@ -52,8 +54,8 @@ func (c *ClusterClient) getTopics() ([]string, error) {
 	return topics, nil
 }
 
-// createTopic is going to create Kafka topic from data from Structures
-func (c *ClusterClient) createTopic(topic *api.KafkaTopicSpec) error {
+// CreateTopic is going to create Kafka topic from data from Structures
+func (c *ClusterClient) CreateTopic(topic *api.KafkaTopicSpec) error {
 	if topic.Partitions > c.maxPartsPerTopic {
 		return fmt.Errorf("%s can't have more partitions than %d", topic.Name, c.maxPartsPerTopic)
 	}
@@ -62,7 +64,7 @@ func (c *ClusterClient) createTopic(topic *api.KafkaTopicSpec) error {
 	}
 	kAdm := kadm.NewClient(c.kCl)
 	// topic config
-	configs := make(map[string]*string, 0)
+	configs := make(map[string]*string, 6)
 	configs["min.insync.replicas"] = kadm.StringPtr(
 		fmt.Sprintf("%d", topic.MinInSyncReplicas))
 	// Retention MS
@@ -113,5 +115,75 @@ func (c *ClusterClient) createTopic(topic *api.KafkaTopicSpec) error {
 	if resp.Err != nil {
 		return fmt.Errorf("can't create topic, cluster err: %w", err)
 	}
+	return nil
+}
+
+// alertConfig would return AlterConfig for topic
+func (c *ClusterClient) alertConfig(name, value string) kadm.AlterConfig {
+	return kadm.AlterConfig{
+		Op:    kadm.SetConfig,
+		Name:  name,
+		Value: &value,
+	}
+}
+
+// UpdateTopic is going to update Kafka topic from data from Structures
+func (c *ClusterClient) UpdateTopic(topic *api.KafkaTopicSpec) error {
+	if topic.Partitions > c.maxPartsPerTopic {
+		return fmt.Errorf("%s can't have more partitions than %d", topic.Name, c.maxPartsPerTopic)
+	}
+	if c.kCl == nil {
+		return fmt.Errorf("we don't have connection to Kafka cluster")
+	}
+	kAdm := kadm.NewClient(c.kCl)
+	// topic config
+	configs := make([]kadm.AlterConfig, 0, 5)
+	configs = append(configs, c.alertConfig("min.insync.replicas", fmt.Sprintf("%d", topic.MinInSyncReplicas)))
+	// Retention MS
+	retentionMS := "-1"
+	if topic.RetentionHours > 0 {
+		retentionMS = fmt.Sprintf("%d", topic.RetentionHours*3600*1000)
+	}
+	configs = append(configs, c.alertConfig("retention.ms", retentionMS))
+	// Retention Bytes
+	retentionBytes := "-1"
+	if topic.RetentionBytes > 0 {
+		retentionBytes = fmt.Sprintf("%d", topic.RetentionBytes)
+	}
+	configs = append(configs, c.alertConfig("retention.bytes", retentionBytes))
+
+	if topic.Segment.Bytes != 0 {
+		configs = append(configs, c.alertConfig("segment.bytes", fmt.Sprintf("%d", topic.Segment.Bytes)))
+	}
+
+	if topic.Segment.MS != 0 {
+		configs = append(configs, c.alertConfig("segment.ms", fmt.Sprintf("%d", topic.Segment.MS)))
+	}
+
+	if len(topic.CleanupPolicy) != 0 {
+		configs = append(configs, c.alertConfig("cleanup.policy", strings.ToLower(topic.CleanupPolicy)))
+	}
+
+	maxMessageBytes := "1048576"
+	if topic.MaxMessageBytes != 1048576 {
+		maxMessageBytes = fmt.Sprintf("%d", topic.MaxMessageBytes)
+	}
+	configs = append(configs, c.alertConfig("max.message.bytes", maxMessageBytes))
+
+	resp, err := kAdm.AlterTopicConfigsState(
+		context.Background(),
+		configs,
+		topic.Name,
+	)
+	// read any other errors
+	for _, r := range resp {
+		if r.Err != nil {
+			err = errors.Join(err, r.Err)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("can't create topic: %w", err)
+	}
+
 	return nil
 }

@@ -385,7 +385,7 @@ func (client *SchemaRegistryClient) CreateSchema(subject string, schema string,
 		references = make([]Reference, 0)
 	}
 
-	schemaReq := schemaRequest{Schema: schema, SchemaType: schemaType.String(), References: references}
+	schemaReq := schemaRequest{Schema: schema, SchemaType: string(schemaType), References: references}
 	schemaBytes, err := json.Marshal(schemaReq)
 	if err != nil {
 		return nil, err

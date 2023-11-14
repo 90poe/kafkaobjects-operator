@@ -63,7 +63,7 @@ type KafkaTopicSpec struct {
 	// +optional
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=1
+	// +kubebuilder:default=2
 	MinInSyncReplicas uint `json:"mininsyncreplicas,omitempty"`
 	// +optional
 	// +kubebuilder:default=-1

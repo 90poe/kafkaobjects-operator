@@ -40,8 +40,13 @@ define build_target
 	-X github.com/90poe/kafkaobjects-operator/internal/version.BuildDate='$(BUILT_AT)' \
 	-X github.com/90poe/kafkaobjects-operator/internal/version.GitHash=$(GIT_COMMIT)" \
 	-o bin/manager-$(1)-$(2) \
-	cmd/main.go ;
+	main.go ;
 endef
+
+include .bingo/Variables.mk
+.PHONY: lint
+lint: $(GOLANGCI_LINT)
+	$(GOLANGCI_LINT) run --allow-parallel-runners -c .golangci.yml
 
 # DEFAULT_CHANNEL defines the default channel used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g DEFAULT_CHANNEL = "stable")
@@ -75,10 +80,8 @@ ifeq ($(USE_IMAGE_DIGESTS), true)
 	BUNDLE_GEN_FLAGS += --use-image-digests
 endif
 
-# Image URL to use all building/pushing image targets
-IMG ?= controller:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION = 1.26.0
+ENVTEST_K8S_VERSION = 1.27.1
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -115,11 +118,11 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+manifests: $(CONTROLLER_GEN) ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
-generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: $(CONTROLLER_GEN) ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 .PHONY: fmt
@@ -131,13 +134,13 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out
+test: manifests generate $(SETUP_ENVTEST) ## Run tests.
+	KUBEBUILDER_ASSETS="$(shell $(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out
 
 ##@ Build
 
 .PHONY: build
-build: manifests generate ## Build manager binary.
+build: ## Build manager binary.
 	$(foreach os,$(OSES),$(foreach arch,$(ARCHS),$(call build_target,$(os),$(arch))))
 
 .PHONY: prepare
@@ -208,8 +211,6 @@ $(LOCALBIN):
 
 ## Tool Binaries
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
-CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
-ENVTEST ?= $(LOCALBIN)/setup-envtest
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v4.5.7
@@ -224,17 +225,6 @@ $(KUSTOMIZE): $(LOCALBIN)
 		rm -rf $(LOCALBIN)/kustomize; \
 	fi
 	test -s $(LOCALBIN)/kustomize || { curl -Ss $(KUSTOMIZE_INSTALL_SCRIPT) | bash -s -- $(subst v,,$(KUSTOMIZE_VERSION)) $(LOCALBIN); }
-
-.PHONY: controller-gen
-controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary. If wrong version is installed, it will be overwritten.
-$(CONTROLLER_GEN): $(LOCALBIN)
-	test -s $(LOCALBIN)/controller-gen && $(LOCALBIN)/controller-gen --version | grep -q $(CONTROLLER_TOOLS_VERSION) || \
-	GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION)
-
-.PHONY: envtest
-envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
-$(ENVTEST): $(LOCALBIN)
-	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
 .PHONY: bundle
 bundle: manifests kustomize ## Generate bundle manifests and metadata, then validate generated files.

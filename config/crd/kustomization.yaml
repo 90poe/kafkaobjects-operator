@@ -2,8 +2,8 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-- bases/xo.ninetypercent.io_kafkatopics.yaml
-- bases/xo.ninetypercent.io_kafkaschemas.yaml
+- bases/xo.90poe.io_kafkatopics.yaml
+- bases/xo.90poe.io_kafkaschemas.yaml
 #+kubebuilder:scaffold:crdkustomizeresource
 
 patchesStrategicMerge:

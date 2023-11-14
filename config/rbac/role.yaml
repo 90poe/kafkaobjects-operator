@@ -2,9 +2,34 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  creationTimestamp: null
   name: manager-role
 rules:
+- apiGroups:
+  - xo.90poe.io
+  resources:
+  - kafkatopics
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - xo.90poe.io
+  resources:
+  - kafkatopics/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - xo.90poe.io
+  resources:
+  - kafkatopics/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - xo.ninetypercent.io
   resources:
@@ -27,32 +52,6 @@ rules:
   - xo.ninetypercent.io
   resources:
   - kafkaschemas/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - xo.ninetypercent.io
-  resources:
-  - kafkatopics
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - xo.ninetypercent.io
-  resources:
-  - kafkatopics/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - xo.ninetypercent.io
-  resources:
-  - kafkatopics/status
   verbs:
   - get
   - patch
