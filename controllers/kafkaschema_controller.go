@@ -47,9 +47,9 @@ type KafkaSchemaReconciler struct {
 	Messenger                 *reporter.Messenger
 }
 
-//+kubebuilder:rbac:groups=xo.ninetypercent.io,resources=kafkaschemas,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=xo.ninetypercent.io,resources=kafkaschemas/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=xo.ninetypercent.io,resources=kafkaschemas/finalizers,verbs=update
+//+kubebuilder:rbac:groups=xo.90poe.io,resources=kafkaschemas,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=xo.90poe.io,resources=kafkaschemas/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=xo.90poe.io,resources=kafkaschemas/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
