@@ -212,6 +212,7 @@ github.com/spf13/pflag
 # github.com/stretchr/testify v1.8.4
 ## explicit; go 1.20
 github.com/stretchr/testify/assert
+github.com/stretchr/testify/require
 # github.com/twmb/franz-go v1.15.2
 ## explicit; go 1.18
 github.com/twmb/franz-go/pkg/kbin
@@ -227,6 +228,9 @@ github.com/twmb/franz-go/pkg/kadm
 ## explicit; go 1.18
 github.com/twmb/franz-go/pkg/kmsg
 github.com/twmb/franz-go/pkg/kmsg/internal/kbin
+# go.uber.org/mock v0.3.0
+## explicit; go 1.20
+go.uber.org/mock/gomock
 # go.uber.org/multierr v1.11.0
 ## explicit; go 1.19
 go.uber.org/multierr
