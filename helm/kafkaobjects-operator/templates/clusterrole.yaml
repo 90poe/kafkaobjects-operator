@@ -8,8 +8,9 @@ metadata:
     {{- end }}
   name: {{ include "kafkaobjects-operator.fullname" . }}
 rules:
+rules:
 - apiGroups:
-  - xo.ninetypercent.io
+  - xo.90poe.io
   resources:
   - kafkaschemas
   verbs:
@@ -21,13 +22,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - xo.ninetypercent.io
+  - xo.90poe.io
   resources:
   - kafkaschemas/finalizers
   verbs:
   - update
 - apiGroups:
-  - xo.ninetypercent.io
+  - xo.90poe.io
   resources:
   - kafkaschemas/status
   verbs:
@@ -35,7 +36,7 @@ rules:
   - patch
   - update
 - apiGroups:
-  - xo.ninetypercent.io
+  - xo.90poe.io
   resources:
   - kafkatopics
   verbs:
@@ -47,13 +48,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - xo.ninetypercent.io
+  - xo.90poe.io
   resources:
   - kafkatopics/finalizers
   verbs:
   - update
 - apiGroups:
-  - xo.ninetypercent.io
+  - xo.90poe.io
   resources:
   - kafkatopics/status
   verbs:

@@ -1,7 +1,7 @@
 apiVersion: v2
 name: kafkaobjects-operator
 # Also update CHANGELOG.md
-version: 0.2.3
+version: 0.3.1
 appVersion: v0.3.0
 home: https://github.com/90poe/kafkaobjects-operator
 description: Kafka Objects Operator for Kubernetes. Creates Kafka Topics and Kafka schemas.
