@@ -12,6 +12,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/twmb/franz-go v1.15.2
 	github.com/twmb/franz-go/pkg/kadm v1.10.0
+	go.uber.org/mock v0.3.0
 	k8s.io/apimachinery v0.28.3
 	k8s.io/client-go v0.28.3
 	sigs.k8s.io/controller-runtime v0.16.3

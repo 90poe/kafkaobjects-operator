@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type Options func(*Messenger) error
@@ -26,6 +27,24 @@ func SlackChannel(sl string) Options {
 		if len(s.slackChannel) == 0 {
 			return fmt.Errorf("slack channel must be provided")
 		}
+		return nil
+	}
+}
+
+// SlackClient will add slack client for mocking purposes
+// only use it in tests
+func SlackClient(sl Slack) Options {
+	return func(s *Messenger) error {
+		s.slackClient = sl
+		return nil
+	}
+}
+
+// SlackClient will add slack client for mocking purposes
+// only use it in tests
+func TickInterval(tk time.Duration) Options {
+	return func(s *Messenger) error {
+		s.tickInterval = tk
 		return nil
 	}
 }

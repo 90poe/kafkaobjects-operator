@@ -129,7 +129,10 @@ func (r *KafkaSchemaReconciler) upsertSchema(ctx context.Context, schema *xov1al
 		reqLogger.Info(fmt.Sprintf("schema %s %s status: %s", schema.Spec.Name,
 			reason, statusMessage))
 		// Send message to slack
-		r.Messenger.Message([]string{statusMessage}, fmt.Sprintf("Schema %s", schema.Spec.Name), reporter.MsgColorError)
+		if status == metav1.ConditionFalse {
+			// send message only on error
+			r.Messenger.Send(statusMessage, reporter.ErrorMessage)
+		}
 		// Remove last condition and set new one
 		meta.RemoveStatusCondition(&schema.Status.Conditions, condition)
 		meta.SetStatusCondition(&schema.Status.Conditions, metav1.Condition{

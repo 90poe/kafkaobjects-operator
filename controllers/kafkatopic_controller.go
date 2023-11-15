@@ -83,7 +83,7 @@ func (r *KafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	kClient, err := r.KafkaClientConfig.GetClient()
 	if err != nil {
 		reqLogger.V(0).Info(fmt.Sprintf("Failed to get Kafka Client: %v", err))
-		r.Messenger.Message([]string{fmt.Sprintf("%v", err)}, "Failed to get Kafka Client", reporter.MsgColorError)
+		r.Messenger.Send(fmt.Sprintf("%v", err), reporter.ErrorMessage)
 		return ctrl.Result{}, nil
 	}
 	defer kClient.Close()
@@ -139,7 +139,10 @@ func (r *KafkaTopicReconciler) upsertTopic(ctx context.Context, kClient *kafka.C
 		reqLogger.Info(fmt.Sprintf("topic %s %s status: %s", topic.Spec.Name,
 			reason, statusMessage))
 		// Send message to slack
-		r.Messenger.Message([]string{statusMessage}, fmt.Sprintf("Topic %s", topic.Spec.Name), reporter.MsgColorError)
+		if status == metav1.ConditionFalse {
+			// send message only on error
+			r.Messenger.Send(statusMessage, reporter.ErrorMessage)
+		}
 		// Remove last condition and set new one
 		meta.RemoveStatusCondition(&topic.Status.Conditions, condition)
 		meta.SetStatusCondition(&topic.Status.Conditions, metav1.Condition{
