@@ -48,7 +48,7 @@ func New(token string, options ...Options) (*Messenger, error) {
 	}
 	// We are checking if we have slack client from mocks
 	inter := reflect.TypeOf((*Slack)(nil)).Elem()
-	if !reflect.TypeOf(mess.slackClient).Implements(inter) {
+	if mess.slackClient == nil || !reflect.TypeOf(mess.slackClient).Implements(inter) {
 		// we don't have mock client - create a real one
 		if len(token) != 0 {
 			mess.slackClient = slack.New(token, slack.OptionHTTPClient(mess.httpClient))
