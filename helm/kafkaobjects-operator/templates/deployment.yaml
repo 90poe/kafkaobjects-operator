@@ -17,7 +17,7 @@ spec:
   selector:
     matchLabels:
       {{- include "kafkaobjects-operator.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: operator
+      app.kubernetes.io/component: kafkaobjects-operator
   {{- if not .Values.operator.autoscaling.enabled }}
   replicas: {{ .Values.operator.replicaCount }}
   {{- end }}
