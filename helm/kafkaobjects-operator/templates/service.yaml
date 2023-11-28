@@ -6,7 +6,7 @@ metadata:
   creationTimestamp: null
   labels:
     {{- include "kafkaobjects-operator.labels" . | nindent 4 }}
-    app: kafkaobjects-operator
+    app: {{ include "kafkaobjects-operator.fullname" . }}
     app.kubernetes.io/component: kafkaobjects-operator
     {{- with $sm.labels }}
     {{- toYaml . | nindent 4 }}
@@ -19,7 +19,7 @@ spec:
     port: {{ .Values.operator.metricsPort }}
     targetPort: {{ .Values.operator.metricsPort }}
   selector:
-    app: kafkaobjects-operator
+    app: {{ include "kafkaobjects-operator.fullname" . }}
     app.kubernetes.io/component: kafkaobjects-operator
 status:
   loadBalancer: {}

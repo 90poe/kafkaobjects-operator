@@ -5,7 +5,7 @@ kind: ServiceMonitor
 metadata:
   labels:
     {{- include "kafkaobjects-operator.labels" . | nindent 4 }}
-    app: kafkaobjects-operator
+    app: {{ include "kafkaobjects-operator.fullname" . }}
     app.kubernetes.io/component: kafkaobjects-operator
     {{- with $sm.labels }}
     {{- toYaml . | nindent 4 }}
@@ -16,11 +16,11 @@ spec:
   endpoints:
   - path: /metrics
     targetPort: 8080
-  jobLabel: kafkaobjects-operator
+  jobLabel: {{ include "kafkaobjects-operator.fullname" . }}
   namespaceSelector:
     matchNames:
     - {{ .Release.Namespace }}
   selector:
     matchLabels:
-      app: kafkaobjects-operator
+      app: {{ include "kafkaobjects-operator.fullname" . }}
 {{- end }}

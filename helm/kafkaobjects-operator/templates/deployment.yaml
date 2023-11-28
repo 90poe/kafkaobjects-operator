@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   labels:
     {{- include "kafkaobjects-operator.labels" . | nindent 4 }}
-    app: kafkaobjects-operator
+    app: {{ include "kafkaobjects-operator.fullname" . }}
     app.kubernetes.io/component: kafkaobjects-operator
     {{- with .Values.operator.labels }}
     {{- toYaml . | nindent 4 }}
@@ -37,7 +37,7 @@ spec:
     {{- end }}
       labels:
         {{- include "kafkaobjects-operator.selectorLabels" . | nindent 8 }}
-        app: kafkaobjects-operator
+        app: {{ include "kafkaobjects-operator.fullname" . }}
         app.kubernetes.io/component: kafkaobjects-operator
         {{- with .Values.operator.labels }}
         {{- toYaml . | nindent 8 }}
