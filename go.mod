@@ -10,7 +10,7 @@ require (
 	github.com/riferrei/srclient v0.6.0
 	github.com/slack-go/slack v0.12.3
 	github.com/stretchr/testify v1.8.4
-	github.com/twmb/franz-go v1.15.2
+	github.com/twmb/franz-go v1.15.3
 	github.com/twmb/franz-go/pkg/kadm v1.10.0
 	go.uber.org/mock v0.3.0
 	k8s.io/apimachinery v0.28.3
