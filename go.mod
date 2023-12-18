@@ -5,15 +5,15 @@ go 1.21
 require (
 	github.com/go-logr/logr v1.3.0
 	github.com/ilyakaznacheev/cleanenv v1.5.0
-	github.com/onsi/ginkgo/v2 v2.11.0
-	github.com/onsi/gomega v1.27.10
+	github.com/onsi/ginkgo/v2 v2.13.0
+	github.com/onsi/gomega v1.29.0
 	github.com/riferrei/srclient v0.6.0
 	github.com/slack-go/slack v0.12.3
 	github.com/stretchr/testify v1.8.4
 	github.com/twmb/franz-go v1.15.2
 	github.com/twmb/franz-go/pkg/kadm v1.10.0
 	go.uber.org/mock v0.3.0
-	k8s.io/apimachinery v0.28.3
+	k8s.io/apimachinery v0.29.0
 	k8s.io/client-go v0.28.3
 	sigs.k8s.io/controller-runtime v0.16.3
 )
