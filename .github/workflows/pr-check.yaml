@@ -31,12 +31,12 @@ jobs:
       - name: Install latest major GO version
         uses: actions/setup-go@v4
         with:
-          go-version: '1.20' # The Go version to download
+          go-version: '1.22' # The Go version to download
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v3
         with:
-          version: 'v1.52'
+          version: 'v1.58'
           working-directory: '.'
           args: --allow-parallel-runners -v --timeout 5m
           skip-pkg-cache: true
@@ -54,7 +54,7 @@ jobs:
       - name: Install latest major GO version
         uses: actions/setup-go@v4
         with:
-          go-version: '1.20' # The Go version to download
+          go-version: '1.22' # The Go version to download
 
       - name: Build executables locally
         run: |
@@ -95,7 +95,7 @@ jobs:
       - name: Install latest major GO version
         uses: actions/setup-go@v4
         with:
-          go-version: '1.20' # The Go version to download
+          go-version: '1.22' # The Go version to download
 
       - name: Test locally
         run:
