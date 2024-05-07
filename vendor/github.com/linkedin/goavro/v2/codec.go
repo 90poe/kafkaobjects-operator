@@ -84,17 +84,17 @@ type codecBuilder struct {
 // after instantiation. In other words, `Codec`s may be safely used by
 // many go routines simultaneously, as your program requires.
 //
-//     codec, err := goavro.NewCodec(`
-//         {
-//           "type": "record",
-//           "name": "LongList",
-//           "fields" : [
-//             {"name": "next", "type": ["null", "LongList"], "default": null}
-//           ]
-//         }`)
-//     if err != nil {
-//             fmt.Println(err)
-//     }
+//	codec, err := goavro.NewCodec(`
+//	    {
+//	      "type": "record",
+//	      "name": "LongList",
+//	      "fields" : [
+//	        {"name": "next", "type": ["null", "LongList"], "default": null}
+//	      ]
+//	    }`)
+//	if err != nil {
+//	        fmt.Println(err)
+//	}
 func NewCodec(schemaSpecification string) (*Codec, error) {
 	return NewCodecFrom(schemaSpecification, &codecBuilder{
 		buildCodecForTypeDescribedByMap,
@@ -103,11 +103,98 @@ func NewCodec(schemaSpecification string) (*Codec, error) {
 	})
 }
 
+// NewCodecForStandardJSON returns a codec that uses a special union
+// processing code that allows normal json to be ingested via an
+// avro schema, by inferring the "type" intended for union types.
+//
+// This is the one-way code to get such json into the avro system
+// and the deserialization is not supported in this codec - its
+// json into avro-json one-way and one-way only for this codec.
+//
+// The "type" inference is done by using the types specified as
+// potentially acceptable types for the union, and trying to
+// unpack the incomin json into each of the specified types for
+// the union type. See union.go +/Standard JSON/ for a general
+// description of the problem and details of the solution
+// are in union.go +/nativeAvroFromTextualJson/
+//
+// For a general description of a codex seen the comment for NewCodec
+// above.
+//
+// The following is the exact same schema used in the above
+// code for NewCodec:
+//
+//	codec, err := goavro.NewCodecForStandardJSON(`
+//	    {
+//	      "type": "record",
+//	      "name": "LongList",
+//	      "fields" : [
+//	        {"name": "next", "type": ["null", "LongList"], "default": null}
+//	      ]
+//	    }`)
+//	if err != nil {
+//	        fmt.Println(err)
+//	}
+//
+// The above will take json of this sort:
+//
+// {"next": null}
+//
+// {"next":{"next":null}}
+//
+// {"next":{"next":{"next":null}}}
+//
+// For more examples see the test cases in union_test.go
 func NewCodecForStandardJSON(schemaSpecification string) (*Codec, error) {
 	return NewCodecFrom(schemaSpecification, &codecBuilder{
 		buildCodecForTypeDescribedByMap,
 		buildCodecForTypeDescribedByString,
-		buildCodecForTypeDescribedBySliceJSON,
+		buildCodecForTypeDescribedBySliceOneWayJSON,
+	})
+}
+
+// NewCodecForStandardJSONOneWay is an alias for NewCodecForStandardJSON
+// added to make the transition to two-way json handling more smooth
+//
+// This will unambiguously provide OneWay avro encoding for standard
+// internet json. This takes in internet json, and brings it into
+// the avro world, but the deserialization retains the unique
+// form of normal avro-friendly json where unions have their
+// types types specified in stream like this example from
+// the official docs // https://avro.apache.org/docs/1.11.1/api/c/
+//
+// `{"string": "Follow your bliss."}`
+//
+// To be clear this means the incoming json string:
+//
+// "Follow your bliss."
+//
+// would deserialize according to the avro-json expectations to:
+//
+// `{"string": "Follow your bliss."}`
+//
+// To get full two-way support see the below NewCodecForStandardJSONFull
+func NewCodecForStandardJSONOneWay(schemaSpecification string) (*Codec, error) {
+	return NewCodecForStandardJSON(schemaSpecification)
+}
+
+// NewCodecForStandardJSONFull provides full serialization/deserialization
+// for json that meets the expectations of regular internet json, viewed as
+// something distinct from avro-json which has special handling for union
+// types.  For details see the above comments.
+//
+// With this `codec` you can expect to see a json string like this:
+//
+// "Follow your bliss."
+//
+// to deserialize into the same json structure
+//
+// "Follow your bliss."
+func NewCodecForStandardJSONFull(schemaSpecification string) (*Codec, error) {
+	return NewCodecFrom(schemaSpecification, &codecBuilder{
+		buildCodecForTypeDescribedByMap,
+		buildCodecForTypeDescribedByString,
+		buildCodecForTypeDescribedBySliceTwoWayJSON,
 	})
 }
 
@@ -270,38 +357,38 @@ func newSymbolTable() map[string]*Codec {
 // a nil error value.  On error, it returns the original byte slice, and the
 // error message.
 //
-//     func ExampleBinaryFromNative() {
-//         codec, err := goavro.NewCodec(`
-//             {
-//               "type": "record",
-//               "name": "LongList",
-//               "fields" : [
-//                 {"name": "next", "type": ["null", "LongList"], "default": null}
-//               ]
-//             }`)
-//         if err != nil {
-//             fmt.Println(err)
-//         }
+//	func ExampleBinaryFromNative() {
+//	    codec, err := goavro.NewCodec(`
+//	        {
+//	          "type": "record",
+//	          "name": "LongList",
+//	          "fields" : [
+//	            {"name": "next", "type": ["null", "LongList"], "default": null}
+//	          ]
+//	        }`)
+//	    if err != nil {
+//	        fmt.Println(err)
+//	    }
 //
-//         // Convert native Go form to binary Avro data
-//         binary, err := codec.BinaryFromNative(nil, map[string]interface{}{
-//             "next": map[string]interface{}{
-//                 "LongList": map[string]interface{}{
-//                     "next": map[string]interface{}{
-//                         "LongList": map[string]interface{}{
-//                         // NOTE: May omit fields when using default value
-//                         },
-//                     },
-//                 },
-//             },
-//         })
-//         if err != nil {
-//             fmt.Println(err)
-//         }
+//	    // Convert native Go form to binary Avro data
+//	    binary, err := codec.BinaryFromNative(nil, map[string]interface{}{
+//	        "next": map[string]interface{}{
+//	            "LongList": map[string]interface{}{
+//	                "next": map[string]interface{}{
+//	                    "LongList": map[string]interface{}{
+//	                    // NOTE: May omit fields when using default value
+//	                    },
+//	                },
+//	            },
+//	        },
+//	    })
+//	    if err != nil {
+//	        fmt.Println(err)
+//	    }
 //
-//         fmt.Printf("%#v", binary)
-//         // Output: []byte{0x2, 0x2, 0x0}
-//     }
+//	    fmt.Printf("%#v", binary)
+//	    // Output: []byte{0x2, 0x2, 0x0}
+//	}
 func (c *Codec) BinaryFromNative(buf []byte, datum interface{}) ([]byte, error) {
 	newBuf, err := c.binaryFromNative(buf, datum)
 	if err != nil {
@@ -316,30 +403,30 @@ func (c *Codec) BinaryFromNative(buf []byte, datum interface{}) ([]byte, error) 
 // undecoded bytes, and a nil error value. On error, it returns nil for
 // the datum value, the original byte slice, and the error message.
 //
-//     func ExampleNativeFromBinary() {
-//         codec, err := goavro.NewCodec(`
-//             {
-//               "type": "record",
-//               "name": "LongList",
-//               "fields" : [
-//                 {"name": "next", "type": ["null", "LongList"], "default": null}
-//               ]
-//             }`)
-//         if err != nil {
-//             fmt.Println(err)
-//         }
+//	func ExampleNativeFromBinary() {
+//	    codec, err := goavro.NewCodec(`
+//	        {
+//	          "type": "record",
+//	          "name": "LongList",
+//	          "fields" : [
+//	            {"name": "next", "type": ["null", "LongList"], "default": null}
+//	          ]
+//	        }`)
+//	    if err != nil {
+//	        fmt.Println(err)
+//	    }
 //
-//         // Convert native Go form to binary Avro data
-//         binary := []byte{0x2, 0x2, 0x0}
+//	    // Convert native Go form to binary Avro data
+//	    binary := []byte{0x2, 0x2, 0x0}
 //
-//         native, _, err := codec.NativeFromBinary(binary)
-//         if err != nil {
-//             fmt.Println(err)
-//         }
+//	    native, _, err := codec.NativeFromBinary(binary)
+//	    if err != nil {
+//	        fmt.Println(err)
+//	    }
 //
-//         fmt.Printf("%v", native)
-//         // Output: map[next:map[LongList:map[next:map[LongList:map[next:<nil>]]]]]
-//     }
+//	    fmt.Printf("%v", native)
+//	    // Output: map[next:map[LongList:map[next:map[LongList:map[next:<nil>]]]]]
+//	}
 func (c *Codec) NativeFromBinary(buf []byte) (interface{}, []byte, error) {
 	value, newBuf, err := c.nativeFromBinary(buf)
 	if err != nil {
@@ -355,14 +442,14 @@ func (c *Codec) NativeFromBinary(buf []byte) (interface{}, []byte, error) {
 // error value.  On error, it returns nil for the datum value, the original byte
 // slice, and the error message.
 //
-//     func decode(codec *goavro.Codec, buf []byte) error {
-//         datum, _, err := codec.NativeFromSingle(buf)
-//         if err != nil {
-//             return err
-//         }
-//         _, err = fmt.Println(datum)
-//         return err
-//     }
+//	func decode(codec *goavro.Codec, buf []byte) error {
+//	    datum, _, err := codec.NativeFromSingle(buf)
+//	    if err != nil {
+//	        return err
+//	    }
+//	    _, err = fmt.Println(datum)
+//	    return err
+//	}
 func (c *Codec) NativeFromSingle(buf []byte) (interface{}, []byte, error) {
 	fingerprint, newBuf, err := FingerprintFromSOE(buf)
 	if err != nil {
@@ -385,30 +472,30 @@ func (c *Codec) NativeFromSingle(buf []byte) (interface{}, []byte, error) {
 // error, it returns nil for the datum value, the original byte slice, and the
 // error message.
 //
-//     func ExampleNativeFromTextual() {
-//         codec, err := goavro.NewCodec(`
-//             {
-//               "type": "record",
-//               "name": "LongList",
-//               "fields" : [
-//                 {"name": "next", "type": ["null", "LongList"], "default": null}
-//               ]
-//             }`)
-//         if err != nil {
-//             fmt.Println(err)
-//         }
+//	func ExampleNativeFromTextual() {
+//	    codec, err := goavro.NewCodec(`
+//	        {
+//	          "type": "record",
+//	          "name": "LongList",
+//	          "fields" : [
+//	            {"name": "next", "type": ["null", "LongList"], "default": null}
+//	          ]
+//	        }`)
+//	    if err != nil {
+//	        fmt.Println(err)
+//	    }
 //
-//         // Convert native Go form to text Avro data
-//         text := []byte(`{"next":{"LongList":{"next":{"LongList":{"next":null}}}}}`)
+//	    // Convert native Go form to text Avro data
+//	    text := []byte(`{"next":{"LongList":{"next":{"LongList":{"next":null}}}}}`)
 //
-//         native, _, err := codec.NativeFromTextual(text)
-//         if err != nil {
-//             fmt.Println(err)
-//         }
+//	    native, _, err := codec.NativeFromTextual(text)
+//	    if err != nil {
+//	        fmt.Println(err)
+//	    }
 //
-//         fmt.Printf("%v", native)
-//         // Output: map[next:map[LongList:map[next:map[LongList:map[next:<nil>]]]]]
-//     }
+//	    fmt.Printf("%v", native)
+//	    // Output: map[next:map[LongList:map[next:map[LongList:map[next:<nil>]]]]]
+//	}
 func (c *Codec) NativeFromTextual(buf []byte) (interface{}, []byte, error) {
 	value, newBuf, err := c.nativeFromTextual(buf)
 	if err != nil {
@@ -425,22 +512,22 @@ func (c *Codec) NativeFromTextual(buf []byte) (interface{}, []byte, error) {
 // encoded bytes appended, and a nil error value.  On error, it returns the
 // original byte slice, and the error message.
 //
-//     func ExampleSingleItemEncoding() {
-//         codec, err := goavro.NewCodec(`"int"`)
-//         if err != nil {
-//             fmt.Fprintf(os.Stderr, "%s\n", err)
-//             return
-//         }
+//	func ExampleSingleItemEncoding() {
+//	    codec, err := goavro.NewCodec(`"int"`)
+//	    if err != nil {
+//	        fmt.Fprintf(os.Stderr, "%s\n", err)
+//	        return
+//	    }
 //
-//         buf, err := codec.SingleFromNative(nil, 3)
-//         if err != nil {
-//             fmt.Fprintf(os.Stderr, "%s\n", err)
-//             return
-//         }
+//	    buf, err := codec.SingleFromNative(nil, 3)
+//	    if err != nil {
+//	        fmt.Fprintf(os.Stderr, "%s\n", err)
+//	        return
+//	    }
 //
-//         fmt.Println(buf)
-//         // Output: [195 1 143 92 57 63 26 213 117 114 6]
-//     }
+//	    fmt.Println(buf)
+//	    // Output: [195 1 143 92 57 63 26 213 117 114 6]
+//	}
 func (c *Codec) SingleFromNative(buf []byte, datum interface{}) ([]byte, error) {
 	newBuf, err := c.binaryFromNative(append(buf, c.soeHeader...), datum)
 	if err != nil {
@@ -456,38 +543,38 @@ func (c *Codec) SingleFromNative(buf []byte, datum interface{}) ([]byte, error) 
 // appended, and a nil error value. On error, it returns the original byte
 // slice, and the error message.
 //
-//     func ExampleTextualFromNative() {
-//         codec, err := goavro.NewCodec(`
-//             {
-//               "type": "record",
-//               "name": "LongList",
-//               "fields" : [
-//                 {"name": "next", "type": ["null", "LongList"], "default": null}
-//               ]
-//             }`)
-//         if err != nil {
-//             fmt.Println(err)
-//         }
+//	func ExampleTextualFromNative() {
+//	    codec, err := goavro.NewCodec(`
+//	        {
+//	          "type": "record",
+//	          "name": "LongList",
+//	          "fields" : [
+//	            {"name": "next", "type": ["null", "LongList"], "default": null}
+//	          ]
+//	        }`)
+//	    if err != nil {
+//	        fmt.Println(err)
+//	    }
 //
-//         // Convert native Go form to text Avro data
-//         text, err := codec.TextualFromNative(nil, map[string]interface{}{
-//             "next": map[string]interface{}{
-//                 "LongList": map[string]interface{}{
-//                     "next": map[string]interface{}{
-//                         "LongList": map[string]interface{}{
-//                         // NOTE: May omit fields when using default value
-//                         },
-//                     },
-//                 },
-//             },
-//         })
-//         if err != nil {
-//             fmt.Println(err)
-//         }
+//	    // Convert native Go form to text Avro data
+//	    text, err := codec.TextualFromNative(nil, map[string]interface{}{
+//	        "next": map[string]interface{}{
+//	            "LongList": map[string]interface{}{
+//	                "next": map[string]interface{}{
+//	                    "LongList": map[string]interface{}{
+//	                    // NOTE: May omit fields when using default value
+//	                    },
+//	                },
+//	            },
+//	        },
+//	    })
+//	    if err != nil {
+//	        fmt.Println(err)
+//	    }
 //
-//         fmt.Printf("%s", text)
-//         // Output: {"next":{"LongList":{"next":{"LongList":{"next":null}}}}}
-//     }
+//	    fmt.Printf("%s", text)
+//	    // Output: {"next":{"LongList":{"next":{"LongList":{"next":null}}}}}
+//	}
 func (c *Codec) TextualFromNative(buf []byte, datum interface{}) ([]byte, error) {
 	newBuf, err := c.textualFromNative(buf, datum)
 	if err != nil {
@@ -511,10 +598,16 @@ func (c *Codec) CanonicalSchema() string {
 // canonical schema.  This method returns the signed 64-bit cast of the unsigned
 // 64-bit schema Rabin fingerprint.
 //
-// DEPRECATED: This method has been replaced by the Rabin structure Codec field
+// Deprecated: This method has been replaced by the Rabin structure Codec field
 // and is provided for backward compatibility only.
 func (c *Codec) SchemaCRC64Avro() int64 {
 	return int64(c.Rabin)
+}
+
+// TypeName returns the name of the type described by the
+// schema used to create the Codec.
+func (c *Codec) TypeName() name {
+	return *c.typeName
 }
 
 // convert a schema data structure to a codec, prefixing with specified

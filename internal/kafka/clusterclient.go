@@ -104,7 +104,7 @@ func (c *ClusterClient) CreateTopic(topic *api.KafkaTopicSpec) error {
 	resp, err := kAdm.CreateTopic(
 		context.Background(),
 		int32(topic.Partitions),
-		int16(topic.MinInSyncReplicas),
+		int16(topic.Replication),
 		configs,
 		topic.Name,
 	)
