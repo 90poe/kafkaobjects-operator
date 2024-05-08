@@ -49,7 +49,6 @@ spec:
                 pattern: ^[a-zA-Z0-9\\._\\-]{1,255}$
                 type: string
               schema:
-                default: {}
                 minLength: 2
                 type: string
             required:
