@@ -34,7 +34,7 @@ jobs:
           echo "::set-output name=all_tags::${output}"
 
       - name: Install latest major GO version
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.22' # The Go version to download
 
