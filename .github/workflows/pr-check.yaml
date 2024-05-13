@@ -34,7 +34,7 @@ jobs:
           go-version: '1.22' # The Go version to download
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v3
+        uses: golangci/golangci-lint-action@v6
         with:
           version: 'v1.58'
           working-directory: '.'
