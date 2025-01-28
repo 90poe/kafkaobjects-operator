@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,9 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	"golang.org/x/sync/semaphore"
 )
+
+const defaultSemaphoreWeight int64 = 16
+const defaultTimeout = 5 * time.Second
 
 // ISchemaRegistryClient provides the
 // definition of the operations that
@@ -31,7 +35,9 @@ type ISchemaRegistryClient interface {
 	GetSchema(schemaID int) (*Schema, error)
 	GetLatestSchema(subject string) (*Schema, error)
 	GetSchemaVersions(subject string) ([]int, error)
+	GetSubjectVersionsById(schemaID int) (SubjectVersionResponse, error)
 	GetSchemaByVersion(subject string, version int) (*Schema, error)
+	GetSchemaRegistryURL() string
 	CreateSchema(subject string, schema string, schemaType SchemaType, references ...Reference) (*Schema, error)
 	LookupSchema(subject string, schema string, schemaType SchemaType, references ...Reference) (*Schema, error)
 	ChangeSubjectCompatibilityLevel(subject string, compatibility CompatibilityLevel) (*CompatibilityLevel, error)
@@ -43,6 +49,7 @@ type ISchemaRegistryClient interface {
 	CachingEnabled(value bool)
 	ResetCache()
 	CodecCreationEnabled(value bool)
+	CodecJsonEnabled(value bool)
 	IsSchemaCompatible(subject, schema, version string, schemaType SchemaType, references ...Reference) (bool, error)
 }
 
@@ -58,6 +65,7 @@ type SchemaRegistryClient struct {
 	cachingEnabled           bool
 	cachingEnabledLock       sync.RWMutex
 	codecCreationEnabled     bool
+	codecAsFullJson          bool
 	codecCreationEnabledLock sync.RWMutex
 	idSchemaCache            map[int]*Schema
 	idSchemaCacheLock        sync.RWMutex
@@ -102,7 +110,7 @@ func (s CompatibilityLevel) String() string {
 	return string(s)
 }
 
-// Schema references use the import statement of Protobuf and
+// Reference references use the import statement of Protobuf and
 // the $ref field of JSON Schema. They are defined by the name
 // of the import or $ref and the associated subject in the registry.
 type Reference struct {
@@ -163,48 +171,101 @@ type configChangeRequest struct {
 
 type configChangeResponse configChangeRequest
 
+type SubjectVersionResponse []subjectVersionPair
+
+type subjectVersionPair struct {
+	Subject string `json:"subject"`
+	Version int    `json:"version"`
+}
+
 const (
-	schemaByID       = "/schemas/ids/%d"
-	subjectBySubject = "/subjects/%s"
-	subjectVersions  = "/subjects/%s/versions"
-	subjectByVersion = "/subjects/%s/versions/%s"
-	subjects         = "/subjects"
-	config           = "/config"
-	configBySubject  = "/config/%s"
-	contentType      = "application/vnd.schemaregistry.v1+json"
+	schemaByID          = "/schemas/ids/%d"
+	subjectVersionsByID = "/schemas/ids/%d/versions"
+	subjectBySubject    = "/subjects/%s"
+	subjectVersions     = "/subjects/%s/versions"
+	subjectByVersion    = "/subjects/%s/versions/%s"
+	subjects            = "/subjects"
+	config              = "/config"
+	configBySubject     = "/config/%s"
+	contentType         = "application/vnd.schemaregistry.v1+json"
 )
+
+// schemaRegistryConfig is used in NewSchemaRegistryClient and is configured through Option
+type schemaRegistryConfig struct {
+	client          *http.Client
+	semaphoreWeight int64
+}
+
+// Option serves as an input for NewSchemaRegistryClient
+type Option func(*schemaRegistryConfig)
+
+// WithClient is used in NewSchemaRegistryClient to override the default client
+func WithClient(client *http.Client) Option {
+	return func(registryConfig *schemaRegistryConfig) {
+		registryConfig.client = client
+	}
+}
+
+// WithSemaphoreWeight is used in NewSchemaRegistryClient to override the default semaphoreWeight
+func WithSemaphoreWeight(semaphoreWeight int64) Option {
+	return func(registryConfig *schemaRegistryConfig) {
+		registryConfig.semaphoreWeight = semaphoreWeight
+	}
+}
+
+// NewSchemaRegistryClient creates a client that allows
+// interactions with Schema Registry over HTTP. Applications
+// using this client can retrieve data about schemas, which
+// in turn can be used to serialize and deserialize records.
+func NewSchemaRegistryClient(schemaRegistryURL string, options ...Option) *SchemaRegistryClient {
+	config := &schemaRegistryConfig{
+		client:          &http.Client{Timeout: defaultTimeout},
+		semaphoreWeight: defaultSemaphoreWeight,
+	}
+
+	for _, option := range options {
+		option(config)
+	}
+
+	return &SchemaRegistryClient{
+		schemaRegistryURL:    schemaRegistryURL,
+		httpClient:           config.client,
+		cachingEnabled:       true,
+		codecCreationEnabled: false,
+		idSchemaCache:        make(map[int]*Schema),
+		subjectSchemaCache:   make(map[string]*Schema),
+		sem:                  semaphore.NewWeighted(config.semaphoreWeight),
+	}
+}
 
 // CreateSchemaRegistryClient creates a client that allows
 // interactions with Schema Registry over HTTP. Applications
 // using this client can retrieve data about schemas, which
 // in turn can be used to serialize and deserialize records.
+// Deprecated: Prefer NewSchemaRegistryClient(schemaRegistryURL)
 func CreateSchemaRegistryClient(schemaRegistryURL string) *SchemaRegistryClient {
-	return CreateSchemaRegistryClientWithOptions(schemaRegistryURL, &http.Client{Timeout: 5 * time.Second}, 16)
+	return NewSchemaRegistryClient(schemaRegistryURL)
 }
 
 // CreateSchemaRegistryClientWithOptions provides the ability to pass the http.Client to be used, as well as the semaphoreWeight for concurrent requests
+// Deprecated: Prefer NewSchemaRegistryClient(schemaRegistryURL, WithClient(*http.Client), WithSemaphoreWeight(int64))
 func CreateSchemaRegistryClientWithOptions(schemaRegistryURL string, client *http.Client, semaphoreWeight int) *SchemaRegistryClient {
-	return &SchemaRegistryClient{
-		schemaRegistryURL:    schemaRegistryURL,
-		httpClient:           client,
-		cachingEnabled:       true,
-		codecCreationEnabled: false,
-		idSchemaCache:        make(map[int]*Schema),
-		subjectSchemaCache:   make(map[string]*Schema),
-		sem:                  semaphore.NewWeighted(int64(semaphoreWeight)),
-	}
+	return NewSchemaRegistryClient(schemaRegistryURL, WithClient(client), WithSemaphoreWeight(int64(semaphoreWeight)))
+}
+
+// GetSchemaRegistryURL returns the URL of the Schema Registry
+func (client *SchemaRegistryClient) GetSchemaRegistryURL() string {
+	return client.schemaRegistryURL
 }
 
 // ResetCache resets the schema caches to be able to get updated schemas.
 func (client *SchemaRegistryClient) ResetCache() {
-
 	client.idSchemaCacheLock.Lock()
 	client.subjectSchemaCacheLock.Lock()
 	client.idSchemaCache = make(map[int]*Schema)
 	client.subjectSchemaCache = make(map[string]*Schema)
 	client.idSchemaCacheLock.Unlock()
 	client.subjectSchemaCacheLock.Unlock()
-
 }
 
 // GetSchema gets the schema associated with the given id.
@@ -225,17 +286,18 @@ func (client *SchemaRegistryClient) GetSchema(schemaID int) (*Schema, error) {
 	}
 
 	var schemaResp = new(schemaResponse)
-	err = json.Unmarshal(resp, &schemaResp)
-	if err != nil {
+	if err := json.Unmarshal(resp, &schemaResp); err != nil {
 		return nil, err
 	}
+
 	var codec *goavro.Codec
 	if client.getCodecCreationEnabled() {
-		codec, err = goavro.NewCodec(schemaResp.Schema)
+		codec, err = client.getCodecForSchema(schemaResp.Schema)
 		if err != nil {
 			return nil, err
 		}
 	}
+
 	var schema = &Schema{
 		id:         schemaID,
 		schema:     schemaResp.Schema,
@@ -258,6 +320,22 @@ func (client *SchemaRegistryClient) GetSchema(schemaID int) (*Schema, error) {
 // The schema returned contains the last version for that subject.
 func (client *SchemaRegistryClient) GetLatestSchema(subject string) (*Schema, error) {
 	return client.getVersion(subject, "latest")
+}
+
+// GetSubjectVersionsById returns subject-version pairs identified by the schema ID.
+func (client *SchemaRegistryClient) GetSubjectVersionsById(schemaID int) (SubjectVersionResponse, error) {
+	resp, err := client.httpRequest("GET", fmt.Sprintf(subjectVersionsByID, schemaID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var response = new(SubjectVersionResponse)
+	err = json.Unmarshal(resp, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return *response, nil
 }
 
 // GetSchemaVersions returns a list of versions from a given subject.
@@ -324,8 +402,7 @@ func (client *SchemaRegistryClient) GetCompatibilityLevel(subject string, defaul
 	}
 
 	var configResponse = new(configResponse)
-	err = json.Unmarshal(resp, &configResponse)
-	if err != nil {
+	if err := json.Unmarshal(resp, &configResponse); err != nil {
 		return nil, err
 	}
 
@@ -338,11 +415,12 @@ func (client *SchemaRegistryClient) GetSubjects() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var allSubjects = []string{}
-	err = json.Unmarshal(resp, &allSubjects)
-	if err != nil {
+
+	var allSubjects []string
+	if err = json.Unmarshal(resp, &allSubjects); err != nil {
 		return nil, err
 	}
+
 	return allSubjects, nil
 }
 
@@ -352,11 +430,11 @@ func (client *SchemaRegistryClient) GetSubjectsIncludingDeleted() ([]string, err
 	if err != nil {
 		return nil, err
 	}
-	var allSubjects = []string{}
-	err = json.Unmarshal(resp, &allSubjects)
-	if err != nil {
+	var allSubjects []string
+	if err = json.Unmarshal(resp, &allSubjects); err != nil {
 		return nil, err
 	}
+
 	return allSubjects, nil
 }
 
@@ -385,7 +463,7 @@ func (client *SchemaRegistryClient) CreateSchema(subject string, schema string,
 		references = make([]Reference, 0)
 	}
 
-	schemaReq := schemaRequest{Schema: schema, SchemaType: string(schemaType), References: references}
+	schemaReq := schemaRequest{Schema: schema, SchemaType: schemaType.String(), References: references}
 	schemaBytes, err := json.Marshal(schemaReq)
 	if err != nil {
 		return nil, err
@@ -461,7 +539,7 @@ func (client *SchemaRegistryClient) LookupSchema(subject string, schema string, 
 
 	var codec *goavro.Codec
 	if client.getCodecCreationEnabled() && schemaType == Avro {
-		codec, err = goavro.NewCodec(schemaResp.Schema)
+		codec, err = client.getCodecForSchema(schemaResp.Schema)
 		if err != nil {
 			return nil, err
 		}
@@ -593,6 +671,15 @@ func (client *SchemaRegistryClient) CodecCreationEnabled(value bool) {
 	client.codecCreationEnabled = value
 }
 
+// CodecJsonEnabled allows the application to create codec,
+// which will serialize/deserialize data as standard json.
+// Should be used with CodecCreationEnabled, otherwise it will be ignored.
+func (client *SchemaRegistryClient) CodecJsonEnabled(value bool) {
+	client.codecCreationEnabledLock.Lock()
+	defer client.codecCreationEnabledLock.Unlock()
+	client.codecAsFullJson = value
+}
+
 func (client *SchemaRegistryClient) getVersion(subject string, version string) (*Schema, error) {
 
 	if client.getCachingEnabled() {
@@ -617,7 +704,7 @@ func (client *SchemaRegistryClient) getVersion(subject string, version string) (
 	}
 	var codec *goavro.Codec
 	if client.getCodecCreationEnabled() {
-		codec, err = goavro.NewCodec(schemaResp.Schema)
+		codec, err = client.getCodecForSchema(schemaResp.Schema)
 		if err != nil {
 			return nil, err
 		}
@@ -660,7 +747,11 @@ func (client *SchemaRegistryClient) httpRequest(method, uri string, payload io.R
 		if len(client.credentials.username) > 0 && len(client.credentials.password) > 0 {
 			req.SetBasicAuth(client.credentials.username, client.credentials.password)
 		} else if len(client.credentials.bearerToken) > 0 {
-			req.Header.Add("Authorization", "Bearer "+client.credentials.bearerToken)
+			if strings.Contains(strings.ToLower(uri), "confluent.cloud") {
+				req.Header.Add("Authorization", "Basic "+client.credentials.bearerToken)
+			} else {
+				req.Header.Add("Authorization", "Bearer "+client.credentials.bearerToken)
+			}
 		}
 	}
 	req.Header.Set("Content-Type", contentType)
@@ -692,6 +783,15 @@ func (client *SchemaRegistryClient) getCodecCreationEnabled() bool {
 	client.codecCreationEnabledLock.RLock()
 	defer client.codecCreationEnabledLock.RUnlock()
 	return client.codecCreationEnabled
+}
+
+func (client *SchemaRegistryClient) getCodecForSchema(schema string) (*goavro.Codec, error) {
+	client.codecCreationEnabledLock.RLock()
+	defer client.codecCreationEnabledLock.RUnlock()
+	if client.codecAsFullJson {
+		return goavro.NewCodecForStandardJSONFull(schema)
+	}
+	return goavro.NewCodec(schema)
 }
 
 // NewSchema instantiates a new Schema struct.

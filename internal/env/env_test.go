@@ -38,7 +38,7 @@ func TestMustGetEnv(t *testing.T) {
 			assert.ErrorContains(t, err, test.err)
 			break
 		}
-		assert.Equal(t, test.getValue.(string), ret)
+		assert.Equal(t, test.getValue.(string), ret) // nolint: errcheck
 	}
 	// ints
 	tests = []testEnv{
@@ -60,7 +60,7 @@ func TestMustGetEnv(t *testing.T) {
 			assert.ErrorContains(t, err, test.err)
 			break
 		}
-		assert.Equal(t, test.getValue.(int), ret)
+		assert.Equal(t, test.getValue.(int), ret) // nolint: errcheck
 	}
 	// bools
 	tests = []testEnv{
@@ -87,6 +87,6 @@ func TestMustGetEnv(t *testing.T) {
 			assert.ErrorContains(t, err, test.err)
 			break
 		}
-		assert.Equal(t, test.getValue.(bool), ret)
+		assert.Equal(t, test.getValue.(bool), ret) // nolint: errcheck
 	}
 }

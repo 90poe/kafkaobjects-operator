@@ -15,7 +15,7 @@ linters-settings:
     check-blank: true
   govet:
     # report about shadowed variables
-    check-shadowing: true
+    shadow: true
   gocyclo:
     # minimal code complexity to report, 30 by default (but we recommend 10-20)
     min-complexity: 30
@@ -55,7 +55,6 @@ linters:
     - gofmt
     - gosec
     - lll
-    - megacheck
     - gocritic
   fast: false
 

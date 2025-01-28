@@ -8,31 +8,6 @@ rules:
   - xo.90poe.io
   resources:
   - kafkaschemas
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - xo.90poe.io
-  resources:
-  - kafkaschemas/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - xo.90poe.io
-  resources:
-  - kafkaschemas/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - xo.90poe.io
-  resources:
   - kafkatopics
   verbs:
   - create
@@ -45,12 +20,14 @@ rules:
 - apiGroups:
   - xo.90poe.io
   resources:
+  - kafkaschemas/finalizers
   - kafkatopics/finalizers
   verbs:
   - update
 - apiGroups:
   - xo.90poe.io
   resources:
+  - kafkaschemas/status
   - kafkatopics/status
   verbs:
   - get
