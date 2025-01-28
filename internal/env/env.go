@@ -36,5 +36,5 @@ func GetEnv[T Value](name string) (T, error) {
 	default:
 		ret = value
 	}
-	return ret.(T), nil
+	return ret.(T), nil // nolint: errcheck
 }

@@ -15,7 +15,7 @@ on:
       - synchronize
 
 concurrency:
-  group: ci-tests-${{ inputs.git_repo }}-${{ github.ref }}-1
+  group: ci-tests-kafkaobjects-operator-${{ github.ref }}-1
   cancel-in-progress: true
 
 jobs:
@@ -23,20 +23,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
           submodules: recursive
 
       - name: Install latest major GO version
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.22' # The Go version to download
+          go-version: '1.23' # The Go version to download
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v3
         with:
-          version: 'v1.58'
+          version: 'v1.63'
           working-directory: '.'
           args: --allow-parallel-runners -v --timeout 5m
           skip-pkg-cache: true
@@ -46,35 +46,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
           submodules: recursive
 
       - name: Install latest major GO version
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.22' # The Go version to download
+          go-version: '1.23' # The Go version to download
 
       - name: Build executables locally
         run: |
           make build
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         id: buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to DockerHub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USER }}
           password: ${{ secrets.DOCKER_HUB_PASS }}
 
       - name: Dockerise
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: ./
           builder: ${{ steps.buildx.outputs.name }}
@@ -87,15 +87,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
           submodules: recursive
 
       - name: Install latest major GO version
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.22' # The Go version to download
+          go-version: '1.23' # The Go version to download
 
       - name: Test locally
         run:

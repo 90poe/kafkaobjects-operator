@@ -103,8 +103,8 @@ func (c *ClusterClient) CreateTopic(topic *api.KafkaTopicSpec) error {
 
 	resp, err := kAdm.CreateTopic(
 		context.Background(),
-		int32(topic.Partitions),
-		int16(topic.Replication),
+		int32(topic.Partitions),  // nolint: gosec
+		int16(topic.Replication), // nolint: gosec
 		configs,
 		topic.Name,
 	)

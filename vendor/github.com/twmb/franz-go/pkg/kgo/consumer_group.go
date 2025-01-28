@@ -27,8 +27,7 @@ type groupConsumer struct {
 	cooperative atomicBool // true if the group balancer chosen during Join is cooperative
 
 	// The data for topics that the user assigned. Metadata updates the
-	// atomic.Value in each pointer atomically. If we are consuming via
-	// regex, metadata grabs the lock to add new topics.
+	// atomic.Value in each pointer atomically.
 	tps *topicsPartitions
 
 	reSeen map[string]bool // topics we evaluated against regex, and whether we want them or not
@@ -639,6 +638,7 @@ func (g *groupConsumer) revoke(stage revokeStage, lost map[string][]int32, leavi
 			g.cfg.onRevoked(g.cl.ctx, g.cl, g.nowAssigned.read())
 		}
 		g.nowAssigned.store(nil)
+		g.lastAssigned = nil
 
 		// After nilling uncommitted here, nothing should recreate
 		// uncommitted until a future fetch after the group is
@@ -861,12 +861,6 @@ func (g *groupConsumer) setupAssignedAndHeartbeat() (string, error) {
 	fetchDone := make(chan struct{})
 	defer func() { <-fetchDone }()
 
-	// If cooperative consuming, we may have to resume fetches. See the
-	// comment on adjustCooperativeFetchOffsets.
-	if g.cooperative.Load() {
-		added = g.adjustCooperativeFetchOffsets(added, lost)
-	}
-
 	// Before we fetch offsets, we wait for the user's onAssign callback to
 	// be done. This ensures a few things:
 	//
@@ -883,6 +877,18 @@ func (g *groupConsumer) setupAssignedAndHeartbeat() (string, error) {
 	// necessarily run onRevoke before returning (because of a fatal
 	// error).
 	s.assign(g, added)
+
+	// If cooperative consuming, we may have to resume fetches. See the
+	// comment on adjustCooperativeFetchOffsets.
+	//
+	// We do this AFTER the user's callback. If we add more partitions
+	// to `added` that are from a previously canceled fetch, we do NOT
+	// want to pass those fetch-resumed partitions to the user callback
+	// again. See #705.
+	if g.cooperative.Load() {
+		added = g.adjustCooperativeFetchOffsets(added, lost)
+	}
+
 	<-s.assignDone
 
 	if len(added) > 0 {
@@ -1707,11 +1713,6 @@ func (g *groupConsumer) findNewAssignments() {
 		delta int
 	}
 
-	var rns reNews
-	if g.cfg.regex {
-		defer rns.log(&g.cl.cfg)
-	}
-
 	var numNewTopics int
 	toChange := make(map[string]change, len(topics))
 	for topic, topicPartitions := range topics {
@@ -1734,20 +1735,7 @@ func (g *groupConsumer) findNewAssignments() {
 		// support adding new regex).
 		useTopic := true
 		if g.cfg.regex {
-			want, seen := g.reSeen[topic]
-			if !seen {
-				for rawRe, re := range g.cfg.topics {
-					if want = re.MatchString(topic); want {
-						rns.add(rawRe, topic)
-						break
-					}
-				}
-				if !want {
-					rns.skip(topic)
-				}
-				g.reSeen[topic] = want
-			}
-			useTopic = want
+			useTopic = g.reSeen[topic]
 		}
 
 		// We only track using the topic if there are partitions for
@@ -2428,6 +2416,44 @@ func (cl *Client) MarkCommitRecords(rs ...*Record) {
 				dirty:     current.dirty,
 				committed: current.committed,
 				head:      newHead,
+			}
+		}
+	}
+}
+
+// MarkCommitOffsets marks offsets to be available for autocommitting. This
+// function is only useful if you use the AutoCommitMarks config option, see
+// the documentation on that option for more details. This function does not
+// allow rewinds.
+func (cl *Client) MarkCommitOffsets(unmarked map[string]map[int32]EpochOffset) {
+	g := cl.consumer.g
+	if g == nil || !cl.cfg.autocommitMarks {
+		return
+	}
+
+	// protect g.uncommitted map
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.uncommitted == nil {
+		g.uncommitted = make(uncommitted)
+	}
+
+	for topic, partitions := range unmarked {
+		curPartitions := g.uncommitted[topic]
+		if curPartitions == nil {
+			curPartitions = make(map[int32]uncommit)
+			g.uncommitted[topic] = curPartitions
+		}
+
+		for partition, newHead := range partitions {
+			current := curPartitions[partition]
+			if current.head.Less(newHead) {
+				curPartitions[partition] = uncommit{
+					dirty:     current.dirty,
+					committed: current.committed,
+					head:      newHead,
+				}
 			}
 		}
 	}
