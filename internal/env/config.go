@@ -10,6 +10,7 @@ import (
 type Config struct {
 	KafkaBrokers             string `env:"KAFKA_BROKERS" env-required` // nolint
 	MaxKafkaTopicsPartitions uint   `env:"KAFKA_TOPIC_MAX_PARTITIONS" env-default:"3"`
+	KafkaTopicNameRegexp     string `env:"KAFKA_TOPIC_NAME_REGEXP" env-default:".*"`
 	SchemaRegistryURL        string `env:"SCHEMA_REGISTRY_URL" env-required` // nolint
 	MaxConcurrentReconciles  int    `env:"MAX_CONCURRENT_RECONCILES" env-default:"2"`
 	LabelSelectorsInt        string `env:"LABEL_SELECTOR" env-required` // nolint
