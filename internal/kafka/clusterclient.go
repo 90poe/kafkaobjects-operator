@@ -63,7 +63,7 @@ func (c *ClusterClient) CreateTopic(topic *api.KafkaTopicSpec) error {
 	}
 	// https://ninetypercent.atlassian.net/browse/DEVOPS-6286
 	if !c.topicNamePattern.MatchString(topic.Name) {
-		return fmt.Errorf("topic name `%s` doesn't match pattern `%s`", topic.Name, TopicNamePatternStr)
+		return fmt.Errorf("topic name `%s` doesn't match pattern `%s`", topic.Name, c.topicNamePattern.String())
 	}
 	if c.kCl == nil {
 		return fmt.Errorf("we don't have connection to Kafka cluster")

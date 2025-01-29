@@ -10,10 +10,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kversion"
 )
 
-const (
-	TopicNamePatternStr = `^(dev|test|int|prod)_(op|perf|chart|onboard|mms|onradar|crew|oos|ci|proc|devops|hsqe)_(dms|ben|voe)_(.+)_(.+)_(.+).*$`
-)
-
 // Option is a type of options for ClusterConfig
 type (
 	// ClusterConfig will configure settings for Kafka cluster and it will get a new ClusterCient
@@ -92,10 +88,16 @@ func MaxPartsPerTopic(max uint) Option {
 }
 
 // NewClusterConfig would return ClusterClient or would return error if error occured
-func NewClusterConfig(options ...Option) (*ClusterConfig, error) {
+func NewClusterConfig(kafkaTopicNameRegexp string, options ...Option) (*ClusterConfig, error) {
 	// initialise cluster client
 	c := &ClusterConfig{
 		kOpts: make([]kgo.Opt, 0),
+	}
+	// compile topic name pattern
+	var err error
+	c.topicNamePattern, err = regexp.Compile(kafkaTopicNameRegexp)
+	if err != nil {
+		return nil, fmt.Errorf("can't compile topic name pattern `%s`: %w", kafkaTopicNameRegexp, err)
 	}
 	// max version will keep our client talking lower protocol version
 	// for better compatibility
@@ -108,7 +110,7 @@ func NewClusterConfig(options ...Option) (*ClusterConfig, error) {
 		}
 	}
 	// verify all settings are correct
-	err := c.verify()
+	err = c.verify()
 	if err != nil {
 		return nil, fmt.Errorf("can't verify ClusterClient: %w", err)
 	}
@@ -127,7 +129,6 @@ func NewClusterConfig(options ...Option) (*ClusterConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.topicNamePattern = regexp.MustCompile(TopicNamePatternStr)
 	return c, nil
 }
 

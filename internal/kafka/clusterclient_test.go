@@ -33,8 +33,8 @@ func TestCreateTopic(t *testing.T) {
 				Partitions: 3,
 			},
 			maxPartitions: 5,
-			namePattern:   "^[a-zA-Z0-9-_.]+$",
-			wantErr:       "topic name `invalid@topic` doesn't match pattern `^(dev|test|int|prod)_(op|perf|chart|onboard|mms|onradar|crew|oos|ci|proc|devops|hsqe)_(dms|ben|voe)_(.+)_(.+)_(.+).*$`",
+			namePattern:   "^(dev|test)_(some|domain)_(purpose)_(.+)_(.+)_(.+).*$",
+			wantErr:       "topic name `invalid@topic` doesn't match pattern `^(dev|test)_(some|domain)_(purpose)_(.+)_(.+)_(.+).*$`",
 		},
 		{
 			name: "nil kafka client",

@@ -105,6 +105,7 @@ func (r *KafkaTopicReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	// init kafka client
 	r.KafkaClientConfig, err = kafka.NewClusterConfig(
+		config.KafkaTopicNameRegexp,
 		kafka.Brokers(config.KafkaBrokers),
 		kafka.MaxPartsPerTopic(config.MaxKafkaTopicsPartitions),
 	)
