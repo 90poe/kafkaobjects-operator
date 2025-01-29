@@ -122,6 +122,8 @@ operator:
     brokers: ""
     #  URL for Schema Registry, must have http:// or https:// prefix
     schemaRegistryURL: ""
+    # Acceptable Kafka topic names regexp pattern
+    topicNameRegexp: ".*"
 
   # Labels selector for the Kafka objects to watch
   # any selector from here is accepted https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/

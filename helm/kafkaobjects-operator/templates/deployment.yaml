@@ -103,6 +103,8 @@ spec:
                   fieldPath: metadata.namespace
             - name: KAFKA_BROKERS
               value: {{ .Values.operator.kafka.brokers | quote }}
+            - name: KAFKA_TOPIC_NAME_REGEXP
+              value: {{ .Values.operator.kafka.topicNameRegexp | quote }}
             - name: SCHEMA_REGISTRY_URL
               value: {{ .Values.operator.kafka.schemaRegistryURL | quote }}
             {{ if .Values.operator.objectsLabelSelector }}
