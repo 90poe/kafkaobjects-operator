@@ -3,10 +3,15 @@ package kafka
 import (
 	"crypto/tls"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kversion"
+)
+
+const (
+	TopicNamePatternStr = `^(dev|test|int|prod)_(op|perf|chart|onboard|mms|onradar|crew|oos|ci|proc|devops|hsqe)_(dms|ben|voe)_(.+)_(.+)_(.+).*$`
 )
 
 // Option is a type of options for ClusterConfig
@@ -21,6 +26,7 @@ type (
 		tlsEnabled            bool
 		tlsInsecureSkipVerify bool
 		maxPartsPerTopic      uint
+		topicNamePattern      *regexp.Regexp
 	}
 	Option func(*ClusterConfig) error
 )
@@ -121,6 +127,7 @@ func NewClusterConfig(options ...Option) (*ClusterConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.topicNamePattern = regexp.MustCompile(TopicNamePatternStr)
 	return c, nil
 }
 
@@ -136,6 +143,7 @@ func (c *ClusterConfig) GetClient() (*ClusterClient, error) {
 	var err error
 	cl := &ClusterClient{
 		maxPartsPerTopic: c.maxPartsPerTopic,
+		topicNamePattern: c.topicNamePattern,
 	}
 	cl.kCl, err = kgo.NewClient(c.kOpts...)
 	if err != nil {
