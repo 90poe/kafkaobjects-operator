@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	api "github.com/90poe/kafkaobjects-operator/api/v1alpha1"
@@ -16,6 +17,7 @@ type (
 	ClusterClient struct {
 		kCl              *kgo.Client
 		maxPartsPerTopic uint
+		topicNamePattern *regexp.Regexp
 	}
 )
 
@@ -58,6 +60,10 @@ func (c *ClusterClient) getTopics() ([]string, error) {
 func (c *ClusterClient) CreateTopic(topic *api.KafkaTopicSpec) error {
 	if topic.Partitions > c.maxPartsPerTopic {
 		return fmt.Errorf("%s can't have more partitions than %d", topic.Name, c.maxPartsPerTopic)
+	}
+	// https://ninetypercent.atlassian.net/browse/DEVOPS-6286
+	if !c.topicNamePattern.MatchString(topic.Name) {
+		return fmt.Errorf("topic name `%s` doesn't match pattern `%s`", topic.Name, TopicNamePatternStr)
 	}
 	if c.kCl == nil {
 		return fmt.Errorf("we don't have connection to Kafka cluster")
