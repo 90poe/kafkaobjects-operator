@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
-      - uses: olegtarasov/get-tag@v2.1.2
+      - uses: olegtarasov/get-tag@v2.1.4
         id: tagName
         with:
           tagRegex: 'operator/(.*)'
