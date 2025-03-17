@@ -2,6 +2,8 @@ module github.com/90poe/kafkaobjects-operator
 
 go 1.23.0
 
+toolchain go1.24.1
+
 require (
 	github.com/go-logr/logr v1.4.2
 	github.com/ilyakaznacheev/cleanenv v1.5.0
@@ -13,7 +15,7 @@ require (
 	github.com/twmb/franz-go v1.18.1
 	github.com/twmb/franz-go/pkg/kadm v1.15.0
 	go.uber.org/mock v0.5.0
-	k8s.io/apimachinery v0.32.1
+	k8s.io/apimachinery v0.32.3
 	k8s.io/client-go v0.32.1
 	sigs.k8s.io/controller-runtime v0.20.1
 )
